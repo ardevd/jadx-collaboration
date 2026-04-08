@@ -1,7 +1,7 @@
 package uk.oshawk.jadx.collaboration
 
 import jadx.api.plugins.JadxPluginContext
-import org.jetbrains.kotlin.backend.common.push
+import java.awt.event.ActionListener
 import java.awt.GridLayout
 import javax.swing.*
 import javax.swing.text.SimpleAttributeSet
@@ -52,16 +52,16 @@ class ConflictModal(parent: JFrame, remote: RepositoryItem, local: RepositoryIte
         val localChanges = mutableListOf<Pair<String, String>>()
         when {
             remote is RepositoryRename && local is RepositoryRename -> {
-                remoteChanges.push(Pair("New Name:", "${remote.newName}"))
-                localChanges.push(Pair("New Name:", "${local.newName}"))
+                remoteChanges.add(Pair("New Name:", "${remote.newName}"))
+                localChanges.add(Pair("New Name:", "${local.newName}"))
             }
 
             remote is RepositoryComment && local is RepositoryComment -> {
-                remoteChanges.push(Pair("Comment:", "${remote.comment}"))
-                localChanges.push(Pair("Comment:", "${local.comment}"))
+                remoteChanges.add(Pair("Comment:", "${remote.comment}"))
+                localChanges.add(Pair("Comment:", "${local.comment}"))
 
-                remoteChanges.push(Pair("Style:", "${remote.style}"))
-                localChanges.push(Pair("Style:", "${local.style}"))
+                remoteChanges.add(Pair("Style:", "${remote.style}"))
+                localChanges.add(Pair("Style:", "${local.style}"))
             }
 
             else -> {
@@ -123,16 +123,16 @@ class ConflictModal(parent: JFrame, remote: RepositoryItem, local: RepositoryIte
         add(text)
 
         val remoteButton = JButton("Remote")
-        remoteButton.addActionListener {
+        remoteButton.addActionListener(ActionListener {
             result = true
             dispose()
-        }
+        })
 
         val localButton = JButton("Local")
-        localButton.addActionListener {
+        localButton.addActionListener(ActionListener {
             result = false
             dispose()
-        }
+        })
 
         val buttons = JPanel(GridLayout(1, 2))
         buttons.add(remoteButton)

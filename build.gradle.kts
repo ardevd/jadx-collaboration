@@ -1,8 +1,8 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
 plugins {
-	kotlin("jvm") version "1.9.23"
-	kotlin("plugin.noarg") version "1.9.23"
+	kotlin("jvm") version "2.1.0"
+	kotlin("plugin.noarg") version "2.1.0"
 
 	`java-library`
 
@@ -37,6 +37,13 @@ dependencies {
 java {
 	sourceCompatibility = JavaVersion.VERSION_11
 	targetCompatibility = JavaVersion.VERSION_11
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+	kotlinOptions {
+		jvmTarget = "11"
+		freeCompilerArgs += "-Xskip-metadata-version-check"
+	}
 }
 
 noArg {
