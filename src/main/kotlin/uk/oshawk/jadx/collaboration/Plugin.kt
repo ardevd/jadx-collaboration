@@ -18,6 +18,7 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.util.*
 import javax.swing.Icon
+import javax.swing.JOptionPane
 import kotlin.math.max
 
 class Plugin(
@@ -404,6 +405,7 @@ class Plugin(
             if (classNamesDelta.any { classNameDelta -> shouldUpdate(clazz.rawName, classNameDelta) } || clazz.dependencies.any { subClass ->
                     classNamesDelta.any { classNameDelta -> shouldUpdate(subClass.rawName, classNameDelta) } }) {
                 classesToUpdate.add(clazz)
+                clazz.unload()
             }
         }
 
@@ -528,19 +530,35 @@ class Plugin(
         // Pull remote repository into local repository.
         // Update project from local repository.
 
-        val localRepository = readLocalRepository() ?: return
+        val localRepository = readLocalRepository() ?: run {
+            JOptionPane.showMessageDialog(null, "Pull failed: Could not read local repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+            return
+        }
 
         projectToLocalRepository(localRepository)
 
-        runPrePullScriptRepeat() ?: return
+        runPrePullScriptRepeat() ?: run {
+            JOptionPane.showMessageDialog(null, "Pull failed: Pre-pull script failed.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+            return
+        }
 
-        val remoteRepository = readRemoteRepository() ?: return
+        val remoteRepository = readRemoteRepository() ?: run {
+            JOptionPane.showMessageDialog(null, "Pull failed: Could not read remote repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+            return
+        }
 
-        remoteRepositoryToLocalRepository(remoteRepository, localRepository) ?: return
+        remoteRepositoryToLocalRepository(remoteRepository, localRepository) ?: run {
+            JOptionPane.showMessageDialog(null, "Pull failed: Conflict resolution failed.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+            return
+        }
 
-        writeLocalRepository(localRepository) ?: return
+        writeLocalRepository(localRepository) ?: run {
+            JOptionPane.showMessageDialog(null, "Pull failed: Could not write local repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+            return
+        }
 
         localRepositoryToProject(localRepository)
+        JOptionPane.showMessageDialog(null, "Pull completed successfully.", "JADX Collaboration", JOptionPane.INFORMATION_MESSAGE)
     }
 
     private fun push() {
@@ -549,29 +567,47 @@ class Plugin(
 
         var localRepository: LocalRepository? = null
         for (i in 1..5) {
-            localRepository = readLocalRepository() ?: return
+            localRepository = readLocalRepository() ?: run {
+                JOptionPane.showMessageDialog(null, "Push failed: Could not read local repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+                return
+            }
 
             projectToLocalRepository(localRepository)
 
             // Repeat if there is a conflict. Should limit the chance of race conditions, since the user may take time to resolve conflicts.
             var remoteRepository: RemoteRepository
             do {
-                runPrePullScriptRepeat() ?: return
+                runPrePullScriptRepeat() ?: run {
+                    JOptionPane.showMessageDialog(null, "Push failed: Pre-pull script failed.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+                    return
+                }
 
-                remoteRepository = readRemoteRepository() ?: return
+                remoteRepository = readRemoteRepository() ?: run {
+                    JOptionPane.showMessageDialog(null, "Push failed: Could not read remote repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+                    return
+                }
 
-                val conflict = remoteRepositoryToLocalRepository(remoteRepository, localRepository)
-            } while (conflict ?: return)
+                val conflictResult = remoteRepositoryToLocalRepository(remoteRepository, localRepository)
+                if (conflictResult == null) {
+                    JOptionPane.showMessageDialog(null, "Push failed: Conflict resolution failed.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+                    return
+                }
+                val conflict = conflictResult
+            } while (conflict)
 
             localRepositoryToRemoteRepository(localRepository, remoteRepository)
 
-            writeRemoteRepository(remoteRepository) ?: return
+            writeRemoteRepository(remoteRepository) ?: run {
+                JOptionPane.showMessageDialog(null, "Push failed: Could not write remote repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+                return
+            }
 
             when (val exitCode = runPostPushScript()) {
                 0 -> break
                 1 -> {
                     if (i == 5) {
                         LOG.error { "Post-push script failed temporarily on try $i. Aborting." }
+                        JOptionPane.showMessageDialog(null, "Push failed: Post-push script failed temporarily.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
                         return
                     } else {
                         LOG.warn { "Post-push script failed temporarily on try $i. Retrying." }
@@ -580,6 +616,7 @@ class Plugin(
 
                 else -> {
                     LOG.error { "Post-push script failed permanently with exit code $exitCode on try number $i. Aborting," }
+                    JOptionPane.showMessageDialog(null, "Push failed: Post-push script failed permanently.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
                     return
                 }
             }
@@ -589,5 +626,6 @@ class Plugin(
         writeLocalRepository(localRepository!!)
 
         localRepositoryToProject(localRepository)
+        JOptionPane.showMessageDialog(null, "Push completed successfully.", "JADX Collaboration", JOptionPane.INFORMATION_MESSAGE)
     }
 }

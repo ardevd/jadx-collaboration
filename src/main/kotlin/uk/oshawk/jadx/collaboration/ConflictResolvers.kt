@@ -92,6 +92,16 @@ class ConflictModal(parent: JFrame, remote: RepositoryItem, local: RepositoryIte
         text.document.insertString(text.document.length, "${remote.identifier.codeRef?.index}\n", normalFont)
 
         text.document.insertString(text.document.length, "-".repeat(width) + "\n", normalFont)
+        
+        text.document.insertString(text.document.length, "REMOTE", boldFont)
+        text.document.insertString(
+            text.document.length,
+            " ".repeat(width / 2 - 6) + "| ",
+            normalFont
+        )
+        text.document.insertString(text.document.length, "LOCAL\n", boldFont)
+        text.document.insertString(text.document.length, "-".repeat(width) + "\n", normalFont)
+
         for ((remoteChange, localChange) in remoteChanges zip localChanges) {
             val (remoteKey, remoteValue) = remoteChange
             val (localKey, localValue) = localChange
@@ -122,13 +132,13 @@ class ConflictModal(parent: JFrame, remote: RepositoryItem, local: RepositoryIte
 
         add(text)
 
-        val remoteButton = JButton("Remote")
+        val remoteButton = JButton("Accept Remote")
         remoteButton.addActionListener(ActionListener {
             result = true
             dispose()
         })
 
-        val localButton = JButton("Local")
+        val localButton = JButton("Accept Local")
         localButton.addActionListener(ActionListener {
             result = false
             dispose()
