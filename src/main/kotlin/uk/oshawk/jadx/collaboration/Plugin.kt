@@ -14,6 +14,11 @@ import jadx.api.plugins.JadxPluginInfo
 import jadx.api.plugins.events.types.NodeRenamedByUser
 import jadx.gui.treemodel.JRenameNode
 import jadx.gui.ui.MainWindow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.*
@@ -34,9 +39,7 @@ class Plugin(
 
     private val options = Options()
     private var context: JadxPluginContext? = null
-    private val backgroundExecutor = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "$ID-background").apply { isDaemon = true }
-    }
+    private val pluginScope = CoroutineScope(Dispatchers.IO.limitedParallelism(1) + SupervisorJob())
 
     override fun getPluginInfo() = JadxPluginInfo(ID, "JADX Collaboration", "Collaboration support for JADX")
 
@@ -45,28 +48,30 @@ class Plugin(
 
         this.context?.registerOptions(options)
 
-        this.context?.guiContext?.addMenuAction("Pull") { backgroundExecutor.submit { this.pull() } }
-        this.context?.guiContext?.addMenuAction("Push") { backgroundExecutor.submit { this.push() } }
+        this.context?.guiContext?.addMenuAction("Pull") { pluginScope.launch { this@Plugin.pull() } }
+        this.context?.guiContext?.addMenuAction("Push") { pluginScope.launch { this@Plugin.push() } }
 
         this.context?.guiContext?.registerGlobalKeyBinding(
             "$ID.pull",
             "ctrl BACK_SLASH"
-        ) { backgroundExecutor.submit { this.pull() } }
+        ) { pluginScope.launch { this@Plugin.pull() } }
         this.context?.guiContext?.registerGlobalKeyBinding(
             "$ID.push",
             "ctrl shift BACK_SLASH"
-        ) { backgroundExecutor.submit { this.push() } }
+        ) { pluginScope.launch { this@Plugin.push() } }
     }
 
-    private fun uiRun(action: () -> Unit) {
-        context?.guiContext?.uiRun(action) ?: javax.swing.SwingUtilities.invokeLater(action)
+    private suspend fun uiRun(action: suspend () -> Unit) {
+        withContext(Dispatchers.Main) {
+            action()
+        }
     }
 
-    private fun showError(message: String, title: String = "JADX Collaboration") {
+    private suspend fun showError(message: String, title: String = "JADX Collaboration") {
         uiRun { JOptionPane.showMessageDialog(null, message, title, JOptionPane.ERROR_MESSAGE) }
     }
 
-    private fun showInfo(message: String, title: String = "JADX Collaboration") {
+    private suspend fun showInfo(message: String, title: String = "JADX Collaboration") {
         uiRun { JOptionPane.showMessageDialog(null, message, title, JOptionPane.INFORMATION_MESSAGE) }
     }
 
@@ -567,7 +572,7 @@ class Plugin(
         return Unit
     }
 
-    internal fun pull() {
+    internal suspend fun pull() {
         // Update local repository with project changes.
         // Pull remote repository into local repository.
         // Update project from local repository.
@@ -611,7 +616,7 @@ class Plugin(
         }
     }
 
-    internal fun push() {
+    internal suspend fun push() {
         // Update local repository with project changes.
         // Pull remote repository into local repository until there is no conflict.
 
