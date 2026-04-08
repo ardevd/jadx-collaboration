@@ -552,7 +552,24 @@ class Plugin(
         if (gitDir == null || !File(gitDir, ".git").exists()) return Unit
         try {
             Git.open(gitDir).use { git ->
-                git.pull().call()
+                val pullResult = git.pull().call()
+                val mergeResult = pullResult.mergeResult
+                val rebaseResult = pullResult.rebaseResult
+                val hasMergeConflicts = mergeResult?.conflicts?.isNotEmpty() == true
+                val mergeFailed = mergeResult != null && (!mergeResult.mergeStatus.isSuccessful || hasMergeConflicts)
+                val rebaseFailed = rebaseResult != null && !rebaseResult.status.isSuccessful
+
+                if (!pullResult.isSuccessful || mergeFailed || rebaseFailed) {
+                    val mergeStatus = mergeResult?.mergeStatus?.toString() ?: "N/A"
+                    val rebaseStatus = rebaseResult?.status?.toString() ?: "N/A"
+                    val conflictFiles = mergeResult?.conflicts?.keys?.sorted()?.joinToString(", ")
+                    LOG.error {
+                        "JGit pull failed: isSuccessful=${pullResult.isSuccessful}, " +
+                            "mergeStatus=$mergeStatus, rebaseStatus=$rebaseStatus" +
+                            if (hasMergeConflicts) ", conflictFiles=$conflictFiles" else ""
+                    }
+                    return null
+                }
                 LOG.info { "JGit pull successful" }
             }
         } catch (e: Exception) {
