@@ -616,11 +616,10 @@ class Plugin(
         // Pull remote repository into local repository until there is no conflict.
 
         var pulledChanges = 0
-        var pushedChanges = 0
+        var pushedChanges: Int? = null
         var localRepository: LocalRepository? = null
         for (i in 1..5) {
             pulledChanges = 0
-            pushedChanges = 0
             localRepository = readLocalRepository() ?: run {
                 showError("Push failed: Could not read local repository.")
                 return
@@ -660,8 +659,8 @@ class Plugin(
 
             localRepositoryToRemoteRepository(localRepository, remoteRepository)
 
-            pushedChanges = countDifferences(oldRemoteRenames, remoteRepository.renames) +
-                    countDifferences(oldRemoteComments, remoteRepository.comments)
+            pushedChanges = pushedChanges ?: (countDifferences(oldRemoteRenames, remoteRepository.renames) +
+                    countDifferences(oldRemoteComments, remoteRepository.comments))
 
             writeRemoteRepository(remoteRepository) ?: run {
                 showError("Push failed: Could not write remote repository.")
@@ -696,7 +695,7 @@ class Plugin(
 
         uiRun {
             localRepositoryToProject(localRepository)
-            showInfo("Push completed successfully. ($pushedChanges changes pushed, $pulledChanges changes pulled)")
+            showInfo("Push completed successfully. (${pushedChanges ?: 0} changes pushed, $pulledChanges changes pulled)")
         }
     }
 }
