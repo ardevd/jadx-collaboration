@@ -65,7 +65,7 @@ class ConflictModal(parent: JFrame, remote: RepositoryItem, local: RepositoryIte
             }
 
             else -> {
-                assert(false)
+                throw IllegalStateException("Unexpected conflict type: remote=${remote::class.simpleName}, local=${local::class.simpleName}")
             }
         }
 
@@ -95,7 +95,7 @@ class ConflictModal(parent: JFrame, remote: RepositoryItem, local: RepositoryIte
         text.document.insertString(text.document.length, "REMOTE", boldFont)
         text.document.insertString(
             text.document.length,
-            " ".repeat(width / 2 - 6) + "| ",
+            " ".repeat(maxOf(0, width / 2 - 6)) + "| ",
             normalFont
         )
         text.document.insertString(text.document.length, "LOCAL\n", boldFont)
@@ -108,7 +108,7 @@ class ConflictModal(parent: JFrame, remote: RepositoryItem, local: RepositoryIte
             text.document.insertString(text.document.length, remoteKey, boldFont)
             text.document.insertString(
                 text.document.length,
-                " ".repeat(width / 2 - remoteKey.length) + "| ",
+                " ".repeat(maxOf(0, width / 2 - remoteKey.length)) + "| ",
                 normalFont
             )
             text.document.insertString(text.document.length, "${localKey}\n", boldFont)
@@ -122,7 +122,7 @@ class ConflictModal(parent: JFrame, remote: RepositoryItem, local: RepositoryIte
                 remainingLocalValue = remainingLocalValue.drop(WRAP)
                 text.document.insertString(
                     text.document.length,
-                    currentRemoteValue + " ".repeat(width / 2 - currentRemoteValue.length) + "| $currentLocalValue\n",
+                    currentRemoteValue + " ".repeat(maxOf(0, width / 2 - currentRemoteValue.length)) + "| $currentLocalValue\n",
                     normalFont
                 )
             }
