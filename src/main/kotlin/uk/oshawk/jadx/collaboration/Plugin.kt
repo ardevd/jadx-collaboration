@@ -476,6 +476,32 @@ class Plugin(
         context!!.events().send(event)
     }
 
+    private fun <T : RepositoryItem> countDifferences(list1: List<T>, list2: List<T>): Int {
+        var changes = 0
+        var i1 = 0
+        var i2 = 0
+        while (i1 != list1.size || i2 != list2.size) {
+            val item1 = list1.getOrNull(i1)
+            val item2 = list2.getOrNull(i2)
+            when {
+                item1 == null || (item2 != null && item1.identifier > item2.identifier) -> {
+                    i2++
+                    changes++
+                }
+                item2 == null || (item1 != null && item1.identifier < item2.identifier) -> {
+                    i1++
+                    changes++
+                }
+                else -> {
+                    if (!item1.matches(item2)) changes++
+                    i1++
+                    i2++
+                }
+            }
+        }
+        return changes
+    }
+
     private fun localRepositoryToRemoteRepository(
         localRepository: LocalRepository,
         remoteRepository: RemoteRepository
@@ -563,10 +589,16 @@ class Plugin(
             return
         }
 
+        val oldLocalRenames = localRepository.renames.toList()
+        val oldLocalComments = localRepository.comments.toList()
+
         remoteRepositoryToLocalRepository(remoteRepository, localRepository) ?: run {
             showError("Pull failed: Conflict resolution failed.")
             return
         }
+
+        val pulledChanges = countDifferences(oldLocalRenames, localRepository.renames) +
+                countDifferences(oldLocalComments, localRepository.comments)
 
         writeLocalRepository(localRepository) ?: run {
             showError("Pull failed: Could not write local repository.")
@@ -575,7 +607,7 @@ class Plugin(
 
         uiRun {
             localRepositoryToProject(localRepository)
-            showInfo("Pull completed successfully.")
+            showInfo("Pull completed successfully. ($pulledChanges changes pulled)")
         }
     }
 
@@ -583,8 +615,12 @@ class Plugin(
         // Update local repository with project changes.
         // Pull remote repository into local repository until there is no conflict.
 
+        var pulledChanges = 0
+        var pushedChanges = 0
         var localRepository: LocalRepository? = null
         for (i in 1..5) {
+            pulledChanges = 0
+            pushedChanges = 0
             localRepository = readLocalRepository() ?: run {
                 showError("Push failed: Could not read local repository.")
                 return
@@ -605,15 +641,27 @@ class Plugin(
                     return
                 }
 
+                val oldLocalRenames = localRepository.renames.toList()
+                val oldLocalComments = localRepository.comments.toList()
+
                 val conflictResult = remoteRepositoryToLocalRepository(remoteRepository, localRepository)
                 if (conflictResult == null) {
                     showError("Push failed: Conflict resolution failed.")
                     return
                 }
                 val conflict = conflictResult
+
+                pulledChanges += countDifferences(oldLocalRenames, localRepository.renames) +
+                        countDifferences(oldLocalComments, localRepository.comments)
             } while (conflict)
 
+            val oldRemoteRenames = remoteRepository.renames.toList()
+            val oldRemoteComments = remoteRepository.comments.toList()
+
             localRepositoryToRemoteRepository(localRepository, remoteRepository)
+
+            pushedChanges = countDifferences(oldRemoteRenames, remoteRepository.renames) +
+                    countDifferences(oldRemoteComments, remoteRepository.comments)
 
             writeRemoteRepository(remoteRepository) ?: run {
                 showError("Push failed: Could not write remote repository.")
@@ -648,7 +696,7 @@ class Plugin(
 
         uiRun {
             localRepositoryToProject(localRepository)
-            showInfo("Push completed successfully.")
+            showInfo("Push completed successfully. ($pushedChanges changes pushed, $pulledChanges changes pulled)")
         }
     }
 }
