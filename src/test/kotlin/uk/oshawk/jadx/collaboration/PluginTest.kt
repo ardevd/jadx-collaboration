@@ -124,15 +124,15 @@ class RepositoryMockery(
     }
 
     private fun initBareRepo() {
-        Git.init().setBare(true).setInitialBranch("master").setDirectory(bareGitDir).call().close()
+        Git.init().setBare(true).setInitialBranch("main").setDirectory(bareGitDir).call().close()
         val tempDir = createTempDirectory("init_tmp").toFile()
         try {
-            Git.init().setInitialBranch("master").setDirectory(tempDir).call().use { git ->
+            Git.init().setInitialBranch("main").setDirectory(tempDir).call().use { git ->
                 setGitIdentity(git)
                 git.remoteAdd().setName("origin").setUri(URIish(bareGitDir.toURI())).call()
                 git.commit().setMessage("Initial commit").setAllowEmpty(true).call()
                 git.push().setRemote("origin")
-                    .setRefSpecs(RefSpec("HEAD:refs/heads/master")).call()
+                    .setRefSpecs(RefSpec("HEAD:refs/heads/main")).call()
             }
         } finally {
             tempDir.deleteRecursively()
@@ -141,7 +141,7 @@ class RepositoryMockery(
 
     private fun cloneRepo(targetDir: File) {
         Git.cloneRepository().setURI(bareGitDir.toURI().toString()).setDirectory(targetDir)
-            .setBranch("refs/heads/master")
+            .setBranch("refs/heads/main")
             .call().use { git -> setGitIdentity(git) }
     }
 
