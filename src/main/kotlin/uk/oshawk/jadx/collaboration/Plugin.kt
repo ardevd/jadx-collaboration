@@ -623,7 +623,10 @@ class Plugin(
         }
 
         // Think it is a good idea to do this after the script. If something goes wrong, the on-disk local repository should allow us to recover.
-        writeLocalRepository(localRepository!!)
+        writeLocalRepository(localRepository!!) ?: run {
+            JOptionPane.showMessageDialog(null, "Push failed: Could not write local repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+            return
+        }
 
         localRepositoryToProject(localRepository)
         JOptionPane.showMessageDialog(null, "Push completed successfully.", "JADX Collaboration", JOptionPane.INFORMATION_MESSAGE)
