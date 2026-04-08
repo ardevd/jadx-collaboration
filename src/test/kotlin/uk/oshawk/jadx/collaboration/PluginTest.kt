@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.fail
 import org.mockito.kotlin.*
+import kotlinx.coroutines.runBlocking
 import java.nio.file.Path
 import kotlin.io.path.*
 
@@ -123,23 +124,23 @@ class RepositoryMockery(
     fun remoteToLeft() = copy(remote, leftRemote)
     fun remoteToRight() = copy(remote, rightRemote)
 
-    fun leftPull() {
+    fun leftPull() = runBlocking {
         remoteToLeft()
         leftPlugin.plugin.pull()
     }
 
-    fun rightPull() {
+    fun rightPull() = runBlocking {
         remoteToRight()
         rightPlugin.plugin.pull()
     }
 
-    fun leftPush() {
+    fun leftPush() = runBlocking {
         remoteToLeft()
         leftPlugin.plugin.push()
         leftToRemote()
     }
 
-    fun rightPush() {
+    fun rightPush() = runBlocking {
         remoteToRight()
         rightPlugin.plugin.push()
         rightToRemote()
