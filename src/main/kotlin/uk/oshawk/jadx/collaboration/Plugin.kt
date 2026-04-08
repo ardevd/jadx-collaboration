@@ -23,6 +23,8 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.eclipse.jgit.transport.RemoteRefUpdate
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.*
@@ -546,10 +548,24 @@ class Plugin(
     }
 
     private fun jgitPull(): Unit? {
-        if (options.repository.isEmpty()) return Unit
-        val repoFile = File(options.repository)
-        val gitDir = repoFile.absoluteFile.parentFile
-        if (gitDir == null || !File(gitDir, ".git").exists()) return Unit
+        if (options.repository.isEmpty()) {
+            LOG.error { "JGit pull failed: repository path is empty" }
+            return null
+        }
+        val repoFile = File(options.repository).absoluteFile
+        val repoParent = repoFile.parentFile ?: run {
+            LOG.error { "JGit pull failed: could not determine parent directory" }
+            return null
+        }
+        val repositoryBuilder = FileRepositoryBuilder().findGitDir(repoParent)
+        val gitMetadataDir = repositoryBuilder.gitDir ?: run {
+            LOG.error { "JGit pull failed: no Git repository found in or above ${repoParent.absolutePath}" }
+            return null
+        }
+        val gitDir = gitMetadataDir.parentFile ?: run {
+            LOG.error { "JGit pull failed: could not determine Git worktree from ${gitMetadataDir.absolutePath}" }
+            return null
+        }
         try {
             Git.open(gitDir).use { git ->
                 val pullResult = git.pull().call()
@@ -580,15 +596,48 @@ class Plugin(
     }
 
     private fun jgitPush(): Unit? {
-        if (options.repository.isEmpty()) return Unit
-        val repoFile = File(options.repository)
-        val gitDir = repoFile.absoluteFile.parentFile
-        if (gitDir == null || !File(gitDir, ".git").exists()) return Unit
+        if (options.repository.isEmpty()) {
+            LOG.error { "JGit push failed: repository path is empty" }
+            return null
+        }
+        val repoFile = File(options.repository).absoluteFile
+        val repoParent = repoFile.parentFile ?: run {
+            LOG.error { "JGit push failed: could not determine parent directory" }
+            return null
+        }
+        val repositoryBuilder = FileRepositoryBuilder().findGitDir(repoParent)
+        val gitMetadataDir = repositoryBuilder.gitDir ?: run {
+            LOG.error { "JGit push failed: no Git repository found in or above ${repoParent.absolutePath}" }
+            return null
+        }
+        val gitDir = gitMetadataDir.parentFile ?: run {
+            LOG.error { "JGit push failed: could not determine Git worktree from ${gitMetadataDir.absolutePath}" }
+            return null
+        }
         try {
             Git.open(gitDir).use { git ->
-                git.add().addFilepattern(repoFile.name).call()
+                val repoPath = repoFile.relativeTo(gitDir).path.replace(File.separatorChar, '/')
+                git.add().addFilepattern(repoPath).call()
+
+                val stagingStatus = git.status().call()
+                if (stagingStatus.added.isEmpty() && stagingStatus.changed.isEmpty()) {
+                    LOG.info { "JGit push skipped: no content changes to commit" }
+                    return Unit
+                }
+
                 git.commit().setMessage("jadx-collaboration push").call()
-                git.push().call()
+
+                val pushResults = git.push().call()
+                for (pushResult in pushResults) {
+                    for (refUpdate in pushResult.remoteUpdates) {
+                        val refStatus = refUpdate.status
+                        if (refStatus != RemoteRefUpdate.Status.OK &&
+                            refStatus != RemoteRefUpdate.Status.UP_TO_DATE) {
+                            LOG.error { "JGit push failed: ref ${refUpdate.remoteName} status=$refStatus message=${refUpdate.message}" }
+                            return null
+                        }
+                    }
+                }
                 LOG.info { "JGit push successful" }
             }
         } catch (e: Exception) {
