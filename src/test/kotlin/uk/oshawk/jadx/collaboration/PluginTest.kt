@@ -125,23 +125,23 @@ class RepositoryMockery(
 
     fun leftPull() {
         remoteToLeft()
-        leftPlugin.pull!!.run()
+        leftPlugin.plugin.pull()
     }
 
     fun rightPull() {
         remoteToRight()
-        rightPlugin.pull!!.run()
+        rightPlugin.plugin.pull()
     }
 
     fun leftPush() {
         remoteToLeft()
-        leftPlugin.push!!.run()
+        leftPlugin.plugin.push()
         leftToRemote()
     }
 
     fun rightPush() {
         remoteToRight()
-        rightPlugin.push!!.run()
+        rightPlugin.plugin.push()
         rightToRemote()
     }
 }
