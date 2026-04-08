@@ -18,11 +18,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.*
-import java.util.concurrent.Executors
 import javax.swing.Icon
 import javax.swing.JOptionPane
 import kotlin.math.max
@@ -61,9 +63,23 @@ class Plugin(
         ) { pluginScope.launch { this@Plugin.push() } }
     }
 
-    private suspend fun uiRun(action: suspend () -> Unit) {
-        withContext(Dispatchers.Main) {
-            action()
+    private suspend fun uiRun(action: () -> Unit) {
+        val guiContext = context?.guiContext
+        if (guiContext != null) {
+            suspendCancellableCoroutine { cont ->
+                guiContext.uiRun(Runnable {
+                    try {
+                        action()
+                        cont.resume(Unit)
+                    } catch (e: Throwable) {
+                        cont.resumeWithException(e)
+                    }
+                })
+            }
+        } else {
+            withContext(Dispatchers.Main) {
+                action()
+            }
         }
     }
 
@@ -610,10 +626,8 @@ class Plugin(
             return
         }
 
-        uiRun {
-            localRepositoryToProject(localRepository)
-            showInfo("Pull completed successfully. ($pulledChanges changes pulled)")
-        }
+        uiRun { localRepositoryToProject(localRepository) }
+        showInfo("Pull completed successfully. ($pulledChanges changes pulled)")
     }
 
     internal suspend fun push() {
@@ -698,9 +712,7 @@ class Plugin(
             return
         }
 
-        uiRun {
-            localRepositoryToProject(localRepository)
-            showInfo("Push completed successfully. (${pushedChanges ?: 0} changes pushed, $pulledChanges changes pulled)")
-        }
+        uiRun { localRepositoryToProject(localRepository) }
+        showInfo("Push completed successfully. (${pushedChanges ?: 0} changes pushed, $pulledChanges changes pulled)")
     }
 }
