@@ -160,6 +160,14 @@ class ConflictModal(parent: JFrame, remote: RepositoryItem, local: RepositoryIte
 }
 
 fun dialogConflictResolver(context: JadxPluginContext, remote: RepositoryItem, local: RepositoryItem): Boolean? {
-    return ConflictModal(getMainWindow(context), remote, local).showModal()
+    var result: Boolean? = null
+    if (javax.swing.SwingUtilities.isEventDispatchThread()) {
+        result = ConflictModal(getMainWindow(context), remote, local).showModal()
+    } else {
+        javax.swing.SwingUtilities.invokeAndWait {
+            result = ConflictModal(getMainWindow(context), remote, local).showModal()
+        }
+    }
+    return result
 }
 

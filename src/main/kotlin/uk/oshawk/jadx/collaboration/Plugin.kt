@@ -41,17 +41,29 @@ class Plugin(
 
         this.context?.registerOptions(options)
 
-        this.context?.guiContext?.addMenuAction("Pull") { this.context?.guiContext?.uiRun(this::pull) }
-        this.context?.guiContext?.addMenuAction("Push") { this.context?.guiContext?.uiRun(this::push) }
+        this.context?.guiContext?.addMenuAction("Pull") { kotlin.concurrent.thread { this.pull() } }
+        this.context?.guiContext?.addMenuAction("Push") { kotlin.concurrent.thread { this.push() } }
 
         this.context?.guiContext?.registerGlobalKeyBinding(
             "$ID.pull",
             "ctrl BACK_SLASH"
-        ) { this.context?.guiContext?.uiRun(this::pull) }
+        ) { kotlin.concurrent.thread { this.pull() } }
         this.context?.guiContext?.registerGlobalKeyBinding(
             "$ID.push",
             "ctrl shift BACK_SLASH"
-        ) { this.context?.guiContext?.uiRun(this::push) }
+        ) { kotlin.concurrent.thread { this.push() } }
+    }
+
+    private fun uiRun(action: () -> Unit) {
+        context?.guiContext?.uiRun(action) ?: javax.swing.SwingUtilities.invokeLater(action)
+    }
+
+    private fun showError(message: String, title: String = "JADX Collaboration") {
+        uiRun { JOptionPane.showMessageDialog(null, message, title, JOptionPane.ERROR_MESSAGE) }
+    }
+
+    private fun showInfo(message: String, title: String = "JADX Collaboration") {
+        uiRun { JOptionPane.showMessageDialog(null, message, title, JOptionPane.INFORMATION_MESSAGE) }
     }
 
     private fun <R> readRepository(suffix: String, default: R): R? {
@@ -525,50 +537,52 @@ class Plugin(
         return Unit
     }
 
-    private fun pull() {
+    internal fun pull() {
         // Update local repository with project changes.
         // Pull remote repository into local repository.
         // Update project from local repository.
 
         val localRepository = readLocalRepository() ?: run {
-            JOptionPane.showMessageDialog(null, "Pull failed: Could not read local repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+            showError("Pull failed: Could not read local repository.")
             return
         }
 
         projectToLocalRepository(localRepository)
 
         runPrePullScriptRepeat() ?: run {
-            JOptionPane.showMessageDialog(null, "Pull failed: Pre-pull script failed.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+            showError("Pull failed: Pre-pull script failed.")
             return
         }
 
         val remoteRepository = readRemoteRepository() ?: run {
-            JOptionPane.showMessageDialog(null, "Pull failed: Could not read remote repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+            showError("Pull failed: Could not read remote repository.")
             return
         }
 
         remoteRepositoryToLocalRepository(remoteRepository, localRepository) ?: run {
-            JOptionPane.showMessageDialog(null, "Pull failed: Conflict resolution failed.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+            showError("Pull failed: Conflict resolution failed.")
             return
         }
 
         writeLocalRepository(localRepository) ?: run {
-            JOptionPane.showMessageDialog(null, "Pull failed: Could not write local repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+            showError("Pull failed: Could not write local repository.")
             return
         }
 
-        localRepositoryToProject(localRepository)
-        JOptionPane.showMessageDialog(null, "Pull completed successfully.", "JADX Collaboration", JOptionPane.INFORMATION_MESSAGE)
+        uiRun {
+            localRepositoryToProject(localRepository)
+            showInfo("Pull completed successfully.")
+        }
     }
 
-    private fun push() {
+    internal fun push() {
         // Update local repository with project changes.
         // Pull remote repository into local repository until there is no conflict.
 
         var localRepository: LocalRepository? = null
         for (i in 1..5) {
             localRepository = readLocalRepository() ?: run {
-                JOptionPane.showMessageDialog(null, "Push failed: Could not read local repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+                showError("Push failed: Could not read local repository.")
                 return
             }
 
@@ -578,18 +592,18 @@ class Plugin(
             var remoteRepository: RemoteRepository
             do {
                 runPrePullScriptRepeat() ?: run {
-                    JOptionPane.showMessageDialog(null, "Push failed: Pre-pull script failed.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+                    showError("Push failed: Pre-pull script failed.")
                     return
                 }
 
                 remoteRepository = readRemoteRepository() ?: run {
-                    JOptionPane.showMessageDialog(null, "Push failed: Could not read remote repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+                    showError("Push failed: Could not read remote repository.")
                     return
                 }
 
                 val conflictResult = remoteRepositoryToLocalRepository(remoteRepository, localRepository)
                 if (conflictResult == null) {
-                    JOptionPane.showMessageDialog(null, "Push failed: Conflict resolution failed.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+                    showError("Push failed: Conflict resolution failed.")
                     return
                 }
                 val conflict = conflictResult
@@ -598,7 +612,7 @@ class Plugin(
             localRepositoryToRemoteRepository(localRepository, remoteRepository)
 
             writeRemoteRepository(remoteRepository) ?: run {
-                JOptionPane.showMessageDialog(null, "Push failed: Could not write remote repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+                showError("Push failed: Could not write remote repository.")
                 return
             }
 
@@ -607,7 +621,7 @@ class Plugin(
                 1 -> {
                     if (i == 5) {
                         LOG.error { "Post-push script failed temporarily on try $i. Aborting." }
-                        JOptionPane.showMessageDialog(null, "Push failed: Post-push script failed temporarily.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+                        showError("Push failed: Post-push script failed temporarily.")
                         return
                     } else {
                         LOG.warn { "Post-push script failed temporarily on try $i. Retrying." }
@@ -616,7 +630,7 @@ class Plugin(
 
                 else -> {
                     LOG.error { "Post-push script failed permanently with exit code $exitCode on try number $i. Aborting," }
-                    JOptionPane.showMessageDialog(null, "Push failed: Post-push script failed permanently.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+                    showError("Push failed: Post-push script failed permanently.")
                     return
                 }
             }
@@ -624,11 +638,13 @@ class Plugin(
 
         // Think it is a good idea to do this after the script. If something goes wrong, the on-disk local repository should allow us to recover.
         writeLocalRepository(localRepository!!) ?: run {
-            JOptionPane.showMessageDialog(null, "Push failed: Could not write local repository.", "JADX Collaboration", JOptionPane.ERROR_MESSAGE)
+            showError("Push failed: Could not write local repository.")
             return
         }
 
-        localRepositoryToProject(localRepository)
-        JOptionPane.showMessageDialog(null, "Push completed successfully.", "JADX Collaboration", JOptionPane.INFORMATION_MESSAGE)
+        uiRun {
+            localRepositoryToProject(localRepository)
+            showInfo("Push completed successfully.")
+        }
     }
 }
