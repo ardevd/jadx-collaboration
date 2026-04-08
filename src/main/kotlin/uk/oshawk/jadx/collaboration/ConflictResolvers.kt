@@ -1,13 +1,17 @@
 package uk.oshawk.jadx.collaboration
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import jadx.api.plugins.JadxPluginContext
 import java.awt.event.ActionListener
 import java.awt.GridLayout
+import java.lang.reflect.InvocationTargetException
 import javax.swing.*
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
 import kotlin.math.max
 import kotlin.math.min
+
+private val LOG = KotlinLogging.logger {}
 
 const val WRAP = 20
 
@@ -164,8 +168,17 @@ fun dialogConflictResolver(context: JadxPluginContext, remote: RepositoryItem, l
     if (javax.swing.SwingUtilities.isEventDispatchThread()) {
         result = ConflictModal(getMainWindow(context), remote, local).showModal()
     } else {
-        javax.swing.SwingUtilities.invokeAndWait {
-            result = ConflictModal(getMainWindow(context), remote, local).showModal()
+        try {
+            javax.swing.SwingUtilities.invokeAndWait {
+                result = ConflictModal(getMainWindow(context), remote, local).showModal()
+            }
+        } catch (e: InterruptedException) {
+            LOG.error { "Conflict dialog interrupted: ${e.message}" }
+            Thread.currentThread().interrupt()
+            return null
+        } catch (e: InvocationTargetException) {
+            LOG.error(e) { "Conflict dialog threw an exception" }
+            return null
         }
     }
     return result
