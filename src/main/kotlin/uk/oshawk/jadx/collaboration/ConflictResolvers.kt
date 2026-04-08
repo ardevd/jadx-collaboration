@@ -92,7 +92,6 @@ class ConflictModal(parent: JFrame, remote: RepositoryItem, local: RepositoryIte
         text.document.insertString(text.document.length, "${remote.identifier.codeRef?.index}\n", normalFont)
 
         text.document.insertString(text.document.length, "-".repeat(width) + "\n", normalFont)
-        
         text.document.insertString(text.document.length, "REMOTE", boldFont)
         text.document.insertString(
             text.document.length,
