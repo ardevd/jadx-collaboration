@@ -17,6 +17,7 @@ import jadx.gui.ui.MainWindow
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.*
+import java.util.concurrent.Executors
 import javax.swing.Icon
 import javax.swing.JOptionPane
 import kotlin.math.max
@@ -33,6 +34,9 @@ class Plugin(
 
     private val options = Options()
     private var context: JadxPluginContext? = null
+    private val backgroundExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "$ID-background").apply { isDaemon = true }
+    }
 
     override fun getPluginInfo() = JadxPluginInfo(ID, "JADX Collaboration", "Collaboration support for JADX")
 
@@ -41,17 +45,17 @@ class Plugin(
 
         this.context?.registerOptions(options)
 
-        this.context?.guiContext?.addMenuAction("Pull") { kotlin.concurrent.thread { this.pull() } }
-        this.context?.guiContext?.addMenuAction("Push") { kotlin.concurrent.thread { this.push() } }
+        this.context?.guiContext?.addMenuAction("Pull") { backgroundExecutor.submit { this.pull() } }
+        this.context?.guiContext?.addMenuAction("Push") { backgroundExecutor.submit { this.push() } }
 
         this.context?.guiContext?.registerGlobalKeyBinding(
             "$ID.pull",
             "ctrl BACK_SLASH"
-        ) { kotlin.concurrent.thread { this.pull() } }
+        ) { backgroundExecutor.submit { this.pull() } }
         this.context?.guiContext?.registerGlobalKeyBinding(
             "$ID.push",
             "ctrl shift BACK_SLASH"
-        ) { kotlin.concurrent.thread { this.push() } }
+        ) { backgroundExecutor.submit { this.push() } }
     }
 
     private fun uiRun(action: () -> Unit) {
