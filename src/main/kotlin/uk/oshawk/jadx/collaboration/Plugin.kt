@@ -22,6 +22,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import org.eclipse.jgit.api.Git
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.*
@@ -544,47 +545,39 @@ class Plugin(
         LOG.info { "localRepositoryToRemoteRepository: ${remoteRepository.comments.size} new remote repository comments" }
     }
 
-    private fun runScript(script: String): Int {
-        if (script.isEmpty()) return 0
-
-        val command = mutableListOf<String>()
-
-        if (System.getProperty("os.name").lowercase(Locale.getDefault()).contains("win")) {
-            command.add(0, "powershell.exe")
-            command.add(1, "-File")
+    private fun jgitPull(): Unit? {
+        if (options.repository.isEmpty()) return Unit
+        val repoFile = File(options.repository)
+        val gitDir = repoFile.absoluteFile.parentFile
+        if (gitDir == null || !File(gitDir, ".git").exists()) return Unit
+        try {
+            Git.open(gitDir).use { git ->
+                git.pull().call()
+                LOG.info { "JGit pull successful" }
+            }
+        } catch (e: Exception) {
+            LOG.error(e) { "JGit pull exception" }
+            return null
         }
-
-        command.add(script)
-        command.add(options.repository)
-
-        val process = ProcessBuilder(command).start()
-        process.waitFor()
-        return process.exitValue()
+        return Unit
     }
 
-    private fun runPrePullScript() = runScript(this.options.prePull)
-    private fun runPostPushScript() = runScript(this.options.postPush)
-
-    private fun runPrePullScriptRepeat(): Unit? {
-        for (i in 1..5) {
-            when (val exitCode = runPrePullScript()) {
-                0 -> break
-                1 -> {
-                    if (i == 5) {
-                        LOG.error { "Pre-pull script failed temporarily on try $i. Aborting." }
-                        return null
-                    } else {
-                        LOG.warn { "Pre-pull script failed temporarily on try $i. Retrying." }
-                    }
-                }
-
-                else -> {
-                    LOG.error { "Pre-pull script failed permanently with exit code $exitCode on try number $i. Aborting," }
-                    return null
-                }
+    private fun jgitPush(): Unit? {
+        if (options.repository.isEmpty()) return Unit
+        val repoFile = File(options.repository)
+        val gitDir = repoFile.absoluteFile.parentFile
+        if (gitDir == null || !File(gitDir, ".git").exists()) return Unit
+        try {
+            Git.open(gitDir).use { git ->
+                git.add().addFilepattern(repoFile.name).call()
+                git.commit().setMessage("jadx-collaboration push").call()
+                git.push().call()
+                LOG.info { "JGit push successful" }
             }
+        } catch (e: Exception) {
+            LOG.error(e) { "JGit push exception" }
+            return null
         }
-
         return Unit
     }
 
@@ -600,8 +593,8 @@ class Plugin(
 
         projectToLocalRepository(localRepository)
 
-        runPrePullScriptRepeat() ?: run {
-            showError("Pull failed: Pre-pull script failed.")
+        jgitPull() ?: run {
+            showError("Pull failed: JGit pull failed.")
             return
         }
 
@@ -649,8 +642,8 @@ class Plugin(
             // Repeat if there is a conflict. Should limit the chance of race conditions, since the user may take time to resolve conflicts.
             var remoteRepository: RemoteRepository
             do {
-                runPrePullScriptRepeat() ?: run {
-                    showError("Push failed: Pre-pull script failed.")
+                jgitPull() ?: run {
+                    showError("Push failed: JGit pull failed.")
                     return
                 }
 
@@ -686,24 +679,11 @@ class Plugin(
                 return
             }
 
-            when (val exitCode = runPostPushScript()) {
-                0 -> break
-                1 -> {
-                    if (i == 5) {
-                        LOG.error { "Post-push script failed temporarily on try $i. Aborting." }
-                        showError("Push failed: Post-push script failed temporarily.")
-                        return
-                    } else {
-                        LOG.warn { "Post-push script failed temporarily on try $i. Retrying." }
-                    }
-                }
-
-                else -> {
-                    LOG.error { "Post-push script failed permanently with exit code $exitCode on try number $i. Aborting," }
-                    showError("Push failed: Post-push script failed permanently.")
-                    return
-                }
+            jgitPush() ?: run {
+                showError("Push failed: JGit push failed.")
+                return
             }
+            break
         }
 
         // Think it is a good idea to do this after the script. If something goes wrong, the on-disk local repository should allow us to recover.

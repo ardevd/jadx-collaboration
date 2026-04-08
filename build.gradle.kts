@@ -26,6 +26,7 @@ dependencies {
 	implementation("com.google.code.gson:gson:2.10.1")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.8.0")
+	implementation("org.eclipse.jgit:org.eclipse.jgit:6.8.0.202311291450-r")
 
 	testImplementation("org.junit.jupiter:junit-jupiter:5.9.2")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
