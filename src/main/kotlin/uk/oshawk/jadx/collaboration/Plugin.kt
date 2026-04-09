@@ -189,7 +189,8 @@ class Plugin(
 
         if (backgroundExecutor != null) {
             backgroundExecutor.execute(title) {
-                runBlocking { action() }
+                val job = pluginScope.launch { action() }
+                runBlocking { job.join() }
             }
         } else {
             pluginScope.launch { action() }
@@ -791,7 +792,7 @@ class Plugin(
         return Unit
     }
 
-    internal suspend fun pull() {
+    internal open suspend fun pull() {
         // Update local repository with project changes.
         // Pull remote repository into local repository.
         // Update project from local repository.
@@ -833,7 +834,7 @@ class Plugin(
         showInfo("Pull completed successfully. ($pulledChanges changes pulled)")
     }
 
-    internal suspend fun push() {
+    internal open suspend fun push() {
         // Update local repository with project changes.
         // Pull remote repository into local repository until there is no conflict.
 

@@ -7,17 +7,23 @@ import jadx.api.data.impl.JadxCodeData
 import jadx.api.plugins.JadxPluginContext
 import jadx.api.plugins.events.IJadxEvents
 import jadx.api.plugins.gui.JadxGuiContext
+import jadx.gui.jobs.BackgroundExecutor
+import jadx.gui.ui.MainWindow
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.transport.RefSpec
 import org.eclipse.jgit.transport.URIish
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.fail
 import org.mockito.kotlin.*
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.*
 
 class PluginMockery(conflictResolver: (context: JadxPluginContext, remote: RepositoryItem, local: RepositoryItem) -> Boolean?) {
@@ -420,5 +426,160 @@ class PluginTest {
         mockery.leftPlugin.renames = listOf(modRename(genRename(0)))
         mockery.leftPush()
         assertEquals(1, conflicts)
+    }
+}
+
+class BackgroundExecutorTest {
+
+    private fun buildPluginWithBackgroundExecutor(
+        mockBackgroundExecutor: BackgroundExecutor
+    ): Triple<Plugin, Runnable?, Runnable?> {
+        val jadxCodeData = JadxCodeData()
+        val jadxArgs = mock<JadxArgs> { on { codeData } doReturn jadxCodeData }
+        val jadxDecompiler = mock<JadxDecompiler> { on { classes } doReturn listOf() }
+        val iJadxEvents = mock<IJadxEvents> { doNothing().on { send(any()) } }
+
+        val mockMainWindow = mock<MainWindow> {
+            on { backgroundExecutor } doReturn mockBackgroundExecutor
+        }
+
+        var pullAction: Runnable? = null
+        var pushAction: Runnable? = null
+        val jadxGuiContext = mock<JadxGuiContext> {
+            on { addMenuAction(any(), any()) } doAnswer {
+                when (it.getArgument<String>(0)) {
+                    "Pull" -> pullAction = it.getArgument(1)
+                    "Push" -> pushAction = it.getArgument(1)
+                }
+            }
+            on { mainFrame } doReturn mockMainWindow
+            on { uiRun(any()) } doAnswer { it.getArgument<Runnable>(0).run() }
+        }
+
+        val jadxPluginContext = mock<JadxPluginContext> {
+            on { args } doReturn jadxArgs
+            on { decompiler } doReturn jadxDecompiler
+            on { events() } doReturn iJadxEvents
+            on { guiContext } doReturn jadxGuiContext
+            on { registerOptions(any()) } doAnswer { }
+        }
+
+        val plugin = Plugin({ _, _, _ -> null }, false)
+        plugin.init(jadxPluginContext)
+        return Triple(plugin, pullAction, pushAction)
+    }
+
+    @Test
+    fun pullMenuActionUsesBackgroundExecutor() {
+        val executedTitles = mutableListOf<String>()
+        val mockBackgroundExecutor = mock<BackgroundExecutor> {
+            on { execute(any<String>(), any<Runnable>()) } doAnswer { inv ->
+                executedTitles.add(inv.getArgument(0))
+                inv.getArgument<Runnable>(1).run()
+            }
+        }
+
+        val (_, pullAction, _) = buildPluginWithBackgroundExecutor(mockBackgroundExecutor)
+        pullAction?.run()
+
+        assertEquals(listOf("JADX Collaboration: Pulling..."), executedTitles)
+    }
+
+    @Test
+    fun pushMenuActionUsesBackgroundExecutor() {
+        val executedTitles = mutableListOf<String>()
+        val mockBackgroundExecutor = mock<BackgroundExecutor> {
+            on { execute(any<String>(), any<Runnable>()) } doAnswer { inv ->
+                executedTitles.add(inv.getArgument(0))
+                inv.getArgument<Runnable>(1).run()
+            }
+        }
+
+        val (_, _, pushAction) = buildPluginWithBackgroundExecutor(mockBackgroundExecutor)
+        pushAction?.run()
+
+        assertEquals(listOf("JADX Collaboration: Pushing..."), executedTitles)
+    }
+
+    @Test
+    fun executionIsSerializedThroughPluginScope() {
+        // Verify that actions submitted via backgroundExecutor are routed through
+        // pluginScope (limitedParallelism(1)), so they cannot execute concurrently.
+        val activeCount = AtomicInteger(0)
+        val maxConcurrent = AtomicInteger(0)
+        val firstStarted = CountDownLatch(1)
+        val firstMayFinish = CountDownLatch(1)
+
+        val mockBackgroundExecutor = mock<BackgroundExecutor> {
+            on { execute(any<String>(), any<Runnable>()) } doAnswer { inv ->
+                // Execute the runnable on a background thread to simulate real executor behavior
+                Thread { inv.getArgument<Runnable>(1).run() }.also { it.start() }.join(5000)
+            }
+        }
+
+        val jadxCodeData = JadxCodeData()
+        val jadxArgs = mock<JadxArgs> { on { codeData } doReturn jadxCodeData }
+        val jadxDecompiler = mock<JadxDecompiler> { on { classes } doReturn listOf() }
+        val iJadxEvents = mock<IJadxEvents> { doNothing().on { send(any()) } }
+
+        val mockMainWindow = mock<MainWindow> {
+            on { backgroundExecutor } doReturn mockBackgroundExecutor
+        }
+
+        var pullAction: Runnable? = null
+        var pushAction: Runnable? = null
+        val jadxGuiContext = mock<JadxGuiContext> {
+            on { addMenuAction(any(), any()) } doAnswer {
+                when (it.getArgument<String>(0)) {
+                    "Pull" -> pullAction = it.getArgument(1)
+                    "Push" -> pushAction = it.getArgument(1)
+                }
+            }
+            on { mainFrame } doReturn mockMainWindow
+            on { uiRun(any()) } doAnswer { it.getArgument<Runnable>(0).run() }
+        }
+
+        val jadxPluginContext = mock<JadxPluginContext> {
+            on { args } doReturn jadxArgs
+            on { decompiler } doReturn jadxDecompiler
+            on { events() } doReturn iJadxEvents
+            on { guiContext } doReturn jadxGuiContext
+            on { registerOptions(any()) } doAnswer { }
+        }
+
+        // Custom plugin that tracks concurrent coroutine executions
+        val plugin = object : Plugin({ _, _, _ -> null }, false) {
+            override suspend fun pull() {
+                val current = activeCount.incrementAndGet()
+                maxConcurrent.updateAndGet { max -> maxOf(max, current) }
+                firstStarted.countDown()
+                firstMayFinish.await(5, TimeUnit.SECONDS)
+                activeCount.decrementAndGet()
+            }
+
+            override suspend fun push() {
+                val current = activeCount.incrementAndGet()
+                maxConcurrent.updateAndGet { max -> maxOf(max, current) }
+                activeCount.decrementAndGet()
+            }
+        }
+        plugin.init(jadxPluginContext)
+
+        // Start pull action in a thread; it will block until firstMayFinish is released
+        val pullThread = Thread { pullAction?.run() }.also { it.start() }
+
+        // Wait for pull to start, then trigger push concurrently
+        assertTrue(firstStarted.await(5, TimeUnit.SECONDS), "Pull action did not start in time")
+        val pushThread = Thread { pushAction?.run() }.also { it.start() }
+
+        // Allow the first action to complete, then the second should run
+        firstMayFinish.countDown()
+
+        pullThread.join(5000)
+        pushThread.join(5000)
+
+        assertFalse(pullThread.isAlive, "Pull thread did not complete")
+        assertFalse(pushThread.isAlive, "Push thread did not complete")
+        assertEquals(1, maxConcurrent.get(), "Actions ran concurrently — serialization failed")
     }
 }
