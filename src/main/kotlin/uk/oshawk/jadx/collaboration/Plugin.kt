@@ -570,6 +570,8 @@ class Plugin(
             LOG.error { "JGit pull failed: could not determine Git worktree from ${gitMetadataDir.absolutePath}" }
             return null
         }
+        val previousClassLoader = Thread.currentThread().contextClassLoader
+        Thread.currentThread().contextClassLoader = Plugin::class.java.classLoader
         try {
             Git.open(gitDir).use { git ->
                 val pullResult = git.pull().call()
@@ -595,6 +597,8 @@ class Plugin(
         } catch (e: Exception) {
             LOG.error(e) { "JGit pull exception" }
             return null
+        } finally {
+            Thread.currentThread().contextClassLoader = previousClassLoader
         }
         return Unit
     }
@@ -618,6 +622,8 @@ class Plugin(
             LOG.error { "JGit push failed: could not determine Git worktree from ${gitMetadataDir.absolutePath}" }
             return null
         }
+        val previousClassLoader = Thread.currentThread().contextClassLoader
+        Thread.currentThread().contextClassLoader = Plugin::class.java.classLoader
         try {
             Git.open(gitDir).use { git ->
                 val repoPath = repoFile.relativeTo(gitDir).path.replace(File.separatorChar, '/')
@@ -647,6 +653,8 @@ class Plugin(
         } catch (e: Exception) {
             LOG.error(e) { "JGit push exception" }
             return null
+        } finally {
+            Thread.currentThread().contextClassLoader = previousClassLoader
         }
         return Unit
     }
