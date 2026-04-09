@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
@@ -168,17 +169,31 @@ class Plugin(
 
         this.context?.registerOptions(options)
 
-        this.context?.guiContext?.addMenuAction("Pull") { pluginScope.launch { this@Plugin.pull() } }
-        this.context?.guiContext?.addMenuAction("Push") { pluginScope.launch { this@Plugin.push() } }
+        this.context?.guiContext?.addMenuAction("Pull") { runInBackground("JADX Collaboration: Pulling...") { this@Plugin.pull() } }
+        this.context?.guiContext?.addMenuAction("Push") { runInBackground("JADX Collaboration: Pushing...") { this@Plugin.push() } }
 
         this.context?.guiContext?.registerGlobalKeyBinding(
             "$ID.pull",
             "ctrl BACK_SLASH"
-        ) { pluginScope.launch { this@Plugin.pull() } }
+        ) { runInBackground("JADX Collaboration: Pulling...") { this@Plugin.pull() } }
         this.context?.guiContext?.registerGlobalKeyBinding(
             "$ID.push",
             "ctrl shift BACK_SLASH"
-        ) { pluginScope.launch { this@Plugin.push() } }
+        ) { runInBackground("JADX Collaboration: Pushing...") { this@Plugin.push() } }
+    }
+
+    private fun runInBackground(title: String, action: suspend () -> Unit) {
+        val guiContext = context?.guiContext
+        val mainWindow = guiContext?.mainFrame as? MainWindow
+        val backgroundExecutor = mainWindow?.backgroundExecutor
+
+        if (backgroundExecutor != null) {
+            backgroundExecutor.execute(title) {
+                runBlocking { action() }
+            }
+        } else {
+            pluginScope.launch { action() }
+        }
     }
 
     private suspend fun uiRun(action: () -> Unit) {
