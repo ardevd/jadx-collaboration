@@ -512,7 +512,9 @@ open class Plugin(
 
         LOG.info { "remoteRepositoryToLocalRepository: ${localRepository.comments.size} new local repository comments" }
 
-        localRepository.users.putAll(remoteRepository.users)
+        remoteRepository.users.forEach { (uuid, user) ->
+            localRepository.users.putIfAbsent(uuid, user)
+        }
 
         return conflict
     }
