@@ -34,7 +34,12 @@ import org.eclipse.jgit.transport.sshd.SshdSessionFactory
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.*
+import java.awt.event.InputEvent
+import java.awt.event.KeyEvent
+import javax.swing.AbstractAction
 import javax.swing.Icon
+import javax.swing.JComponent
+import javax.swing.KeyStroke
 import javax.swing.JOptionPane
 import kotlin.math.max
 
@@ -171,15 +176,38 @@ open class Plugin(
 
         this.context?.guiContext?.addMenuAction("Pull") { runInBackground("JADX Collaboration: Pulling...") { this@Plugin.pull() } }
         this.context?.guiContext?.addMenuAction("Push") { runInBackground("JADX Collaboration: Pushing...") { this@Plugin.push() } }
+        this.context?.guiContext?.addMenuAction("Recent Changes") { runInBackground("JADX Collaboration: Loading Recent Changes...") { this@Plugin.showRecentChanges() } }
 
-        this.context?.guiContext?.registerGlobalKeyBinding(
-            "$ID.pull",
-            "ctrl BACK_SLASH"
-        ) { runInBackground("JADX Collaboration: Pulling...") { this@Plugin.pull() } }
-        this.context?.guiContext?.registerGlobalKeyBinding(
-            "$ID.push",
-            "ctrl shift BACK_SLASH"
-        ) { runInBackground("JADX Collaboration: Pushing...") { this@Plugin.push() } }
+        val mainWindow = this.context?.guiContext?.mainFrame
+        val contentPane = mainWindow?.contentPane as? JComponent
+        if (contentPane != null) {
+            val inputMap = contentPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+            val actionMap = contentPane.actionMap
+
+            val pullKey = KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SLASH, InputEvent.CTRL_DOWN_MASK)
+            inputMap.put(pullKey, "$ID.pull")
+            actionMap.put("$ID.pull", object : AbstractAction() {
+                override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                    runInBackground("JADX Collaboration: Pulling...") { this@Plugin.pull() }
+                }
+            })
+
+            val pushKey = KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SLASH, InputEvent.CTRL_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK)
+            inputMap.put(pushKey, "$ID.push")
+            actionMap.put("$ID.push", object : AbstractAction() {
+                override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                    runInBackground("JADX Collaboration: Pushing...") { this@Plugin.push() }
+                }
+            })
+
+            val recentKey = KeyStroke.getKeyStroke(KeyEvent.VK_C, InputEvent.CTRL_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK)
+            inputMap.put(recentKey, "$ID.recent_changes")
+            actionMap.put("$ID.recent_changes", object : AbstractAction() {
+                override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                    runInBackground("JADX Collaboration: Loading Recent Changes...") { this@Plugin.showRecentChanges() }
+                }
+            })
+        }
     }
 
     private fun runInBackground(title: String, action: suspend () -> Unit) {
@@ -311,6 +339,7 @@ open class Plugin(
         var projectItemsIndex = 0
         var oldLocalRepositoryItemsIndex = 0
         val newLocalRepositoryItems = mutableListOf<RepositoryItem>()
+        val currentTime = System.currentTimeMillis()
 
         while (projectItemsIndex != projectItems.size || oldLocalRepositoryItemsIndex != oldLocalRepositoryItems.size) {
             val projectItem = projectItems.getOrNull(projectItemsIndex)
@@ -325,13 +354,13 @@ open class Plugin(
                     projectItem == null || (oldLocalRepositoryItem != null && projectItem.identifier > oldLocalRepositoryItem.identifier) -> {
                         // Local repository item not present in project. Must have been deleted.
                         oldLocalRepositoryItemsIndex++
-                        oldLocalRepositoryItem!!.deleted(updatedVersionVector)
+                        oldLocalRepositoryItem!!.deleted(updatedVersionVector, currentTime, localRepositoryUuid)
                     }
 
                     oldLocalRepositoryItem == null || (projectItem != null && projectItem.identifier < oldLocalRepositoryItem.identifier) -> {
                         // Project item not present in local repository. Add it.
                         projectItemsIndex++
-                        projectItem.repositoryItem(updatedVersionVector)
+                        projectItem.repositoryItem(updatedVersionVector, currentTime, localRepositoryUuid)
                     }
 
                     else -> {
@@ -343,7 +372,7 @@ open class Plugin(
                             oldLocalRepositoryItem
                         } else {
                             // Change. Replace with the project item.
-                            projectItem.repositoryItem(updatedVersionVector)
+                            projectItem.repositoryItem(updatedVersionVector, currentTime, localRepositoryUuid)
                         }
                     }
                 }
@@ -395,6 +424,7 @@ open class Plugin(
     }
 
     private fun remoteRepositoryToLocalRepositoryInternal(
+        localRepositoryUuid: UUID,
         remoteRepositoryItems: List<RepositoryItem>,
         oldLocalRepositoryItems: List<RepositoryItem>
     ): Pair<List<RepositoryItem>, Boolean>? {
@@ -467,7 +497,7 @@ open class Plugin(
                             conflict = true
                             when (conflictResolver(context!!, remoteRepositoryItem, oldLocalRepositoryItem)) {
                                 true -> remoteRepositoryItem  // Use remote (including vector) since our version effectively hasn't updated.
-                                false -> oldLocalRepositoryItem.updated(updatedVersionVector)  // Use local with updated vector.
+                                false -> oldLocalRepositoryItem.updated(updatedVersionVector, System.currentTimeMillis(), localRepositoryUuid)  // Use local with updated vector.
                                 null -> {
                                     LOG.error { "Conflict resolution failed." }
                                     return null
@@ -491,7 +521,7 @@ open class Plugin(
         LOG.info { "remoteRepositoryToLocalRepository: ${remoteRepository.renames.size} remote repository renames" }
         LOG.info { "remoteRepositoryToLocalRepository: ${localRepository.renames.size} old local repository renames" }
 
-        val renamesResult = remoteRepositoryToLocalRepositoryInternal(remoteRepository.renames, localRepository.renames)
+        val renamesResult = remoteRepositoryToLocalRepositoryInternal(localRepository.uuid, remoteRepository.renames, localRepository.renames)
         if (renamesResult == null) {
             return null
         } else {
@@ -508,7 +538,7 @@ open class Plugin(
         LOG.info { "remoteRepositoryToLocalRepository: ${localRepository.comments.size} old local repository comments" }
 
         val commentsResult =
-            remoteRepositoryToLocalRepositoryInternal(remoteRepository.comments, localRepository.comments)
+            remoteRepositoryToLocalRepositoryInternal(localRepository.uuid, remoteRepository.comments, localRepository.comments)
         if (commentsResult == null) {
             return null
         } else {
@@ -815,6 +845,46 @@ open class Plugin(
             Thread.currentThread().contextClassLoader = previousClassLoader
         }
         return Unit
+    }
+
+    private fun jumpToItem(item: RepositoryItem) {
+        val guiContext = context?.guiContext ?: return
+        val decompiler = context?.decompiler ?: return
+        
+        val declClass = item.identifier.nodeRef.declaringClass
+        val javaClass = decompiler.classes.find { it.rawName == declClass } ?: return
+        
+        val codeNodeRef = when (item.identifier.nodeRef.type) {
+            IJavaNodeRef.RefType.CLASS -> javaClass.codeNodeRef
+            IJavaNodeRef.RefType.FIELD -> {
+                val shortId = item.identifier.nodeRef.shortId ?: return
+                javaClass.fields.find { it.fieldNode.fieldInfo.shortId == shortId }?.codeNodeRef
+            }
+            IJavaNodeRef.RefType.METHOD -> {
+                val shortId = item.identifier.nodeRef.shortId ?: return
+                javaClass.methods.find { it.methodNode.methodInfo.shortId == shortId }?.codeNodeRef
+            }
+            else -> null
+        }
+        
+        if (codeNodeRef != null) {
+            guiContext.open(codeNodeRef)
+        }
+    }
+
+    internal suspend fun showRecentChanges() {
+        val localRepository = readLocalRepository() ?: run {
+            showError("Could not read local repository.")
+            return
+        }
+
+        val mainWindow = context?.guiContext?.mainFrame ?: return
+
+        uiRun {
+            RecentChangesDialog(mainWindow, localRepository) { item ->
+                jumpToItem(item)
+            }.isVisible = true
+        }
     }
 
     internal open suspend fun pull() {

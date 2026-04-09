@@ -47,7 +47,7 @@ class Identifier(val nodeRef: NodeRef, val codeRef: CodeRef?) : Comparable<Ident
 interface ProjectItem {
     val identifier: Identifier
 
-    fun repositoryItem(versionVector: MutableMap<UUID, Long>): RepositoryItem
+    fun repositoryItem(versionVector: MutableMap<UUID, Long>, timestamp: Long? = null, userUuid: UUID? = null): RepositoryItem
 
     fun matches(projectItem: ProjectItem): Boolean
 
@@ -61,8 +61,8 @@ class ProjectRename(override val identifier: Identifier, val newName: String) : 
         rename.newName
     )
 
-    override fun repositoryItem(versionVector: MutableMap<UUID, Long>) =
-        RepositoryRename(identifier, versionVector, newName)
+    override fun repositoryItem(versionVector: MutableMap<UUID, Long>, timestamp: Long?, userUuid: UUID?) =
+        RepositoryRename(identifier, versionVector, newName, timestamp, userUuid)
 
     override fun matches(projectItem: ProjectItem): Boolean {
         if (projectItem !is ProjectRename) {
@@ -93,8 +93,8 @@ class ProjectComment(override val identifier: Identifier, val comment: String, v
         comment.style
     )
 
-    override fun repositoryItem(versionVector: MutableMap<UUID, Long>) =
-        RepositoryComment(identifier, versionVector, comment, style)
+    override fun repositoryItem(versionVector: MutableMap<UUID, Long>, timestamp: Long?, userUuid: UUID?) =
+        RepositoryComment(identifier, versionVector, comment, style, timestamp, userUuid)
 
     override fun matches(projectItem: ProjectItem): Boolean {
         if (projectItem !is ProjectComment) {
@@ -120,10 +120,12 @@ class ProjectComment(override val identifier: Identifier, val comment: String, v
 interface RepositoryItem {
     val identifier: Identifier
     val versionVector: MutableMap<UUID, Long>
+    val timestamp: Long?
+    val userUuid: UUID?
 
-    fun deleted(versionVector: MutableMap<UUID, Long>): RepositoryItem
+    fun deleted(versionVector: MutableMap<UUID, Long>, timestamp: Long? = null, userUuid: UUID? = null): RepositoryItem
 
-    fun updated(versionVector: MutableMap<UUID, Long>): RepositoryItem
+    fun updated(versionVector: MutableMap<UUID, Long>, timestamp: Long? = null, userUuid: UUID? = null): RepositoryItem
 
     fun matches(projectItem: ProjectItem): Boolean
 
@@ -134,11 +136,13 @@ interface RepositoryItem {
 class RepositoryRename(
     override val identifier: Identifier,
     override val versionVector: MutableMap<UUID, Long>,
-    val newName: String?
+    val newName: String?,
+    override val timestamp: Long? = null,
+    override val userUuid: UUID? = null
 ) : RepositoryItem {
-    override fun deleted(versionVector: MutableMap<UUID, Long>) = RepositoryRename(identifier, versionVector, null)
+    override fun deleted(versionVector: MutableMap<UUID, Long>, timestamp: Long?, userUuid: UUID?) = RepositoryRename(identifier, versionVector, null, timestamp, userUuid)
 
-    override fun updated(versionVector: MutableMap<UUID, Long>) = RepositoryRename(identifier, versionVector, newName)
+    override fun updated(versionVector: MutableMap<UUID, Long>, timestamp: Long?, userUuid: UUID?) = RepositoryRename(identifier, versionVector, newName, timestamp, userUuid)
 
     override fun matches(projectItem: ProjectItem): Boolean {
         if (projectItem !is ProjectRename) {
@@ -170,13 +174,15 @@ class RepositoryComment(
     override val identifier: Identifier,
     override val versionVector: MutableMap<UUID, Long>,
     val comment: String?,
-    val style: CommentStyle?
+    val style: CommentStyle?,
+    override val timestamp: Long? = null,
+    override val userUuid: UUID? = null
 ) : RepositoryItem {
-    override fun deleted(versionVector: MutableMap<UUID, Long>) =
-        RepositoryComment(identifier, versionVector, null, null)
+    override fun deleted(versionVector: MutableMap<UUID, Long>, timestamp: Long?, userUuid: UUID?) =
+        RepositoryComment(identifier, versionVector, null, null, timestamp, userUuid)
 
-    override fun updated(versionVector: MutableMap<UUID, Long>) =
-        RepositoryComment(identifier, versionVector, comment, style)
+    override fun updated(versionVector: MutableMap<UUID, Long>, timestamp: Long?, userUuid: UUID?) =
+        RepositoryComment(identifier, versionVector, comment, style, timestamp, userUuid)
 
     override fun matches(projectItem: ProjectItem): Boolean {
         if (projectItem !is ProjectComment) {
