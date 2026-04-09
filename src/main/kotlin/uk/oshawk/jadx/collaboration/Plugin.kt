@@ -24,8 +24,11 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.eclipse.jgit.transport.CredentialItem
+import org.eclipse.jgit.transport.CredentialsProvider
 import org.eclipse.jgit.transport.RemoteRefUpdate
 import org.eclipse.jgit.transport.SshSessionFactory
+import org.eclipse.jgit.transport.URIish
 import org.eclipse.jgit.transport.sshd.SshdSessionFactory
 import java.io.File
 import java.io.FileNotFoundException
@@ -37,7 +40,70 @@ import kotlin.math.max
 class Plugin(
     // Use remote? Pluggable for testing.
     val conflictResolver: (context: JadxPluginContext, remote: RepositoryItem, local: RepositoryItem) -> Boolean? = ::dialogConflictResolver,
+    val showDialogs: Boolean = true
 ) : JadxPlugin {
+    private var cachedPassphrase: CharArray? = null
+
+    private inner class JadxCredentialsProvider : CredentialsProvider() {
+        override fun isInteractive() = showDialogs
+        override fun supports(vararg items: CredentialItem): Boolean = true
+        override fun get(uri: URIish?, vararg items: CredentialItem): Boolean {
+            if (!showDialogs) return true
+            var ok = true
+            for (item in items) {
+                if (item is CredentialItem.InformationalMessage) {
+                    LOG.info { "SSH Info: ${item.promptText}" }
+                } else if (item is CredentialItem.YesNoType) {
+                    val result = JOptionPane.showConfirmDialog(null, item.promptText, "JADX Collaboration", JOptionPane.YES_NO_OPTION)
+                    item.value = result == JOptionPane.YES_OPTION
+                } else if (item is CredentialItem.CharArrayType) {
+                    val isPassword = item is CredentialItem.Password || item.promptText?.contains("Passphrase", ignoreCase = true) == true || item.promptText?.contains("Password", ignoreCase = true) == true
+                    
+                    if (cachedPassphrase != null && isPassword) {
+                        item.value = cachedPassphrase
+                    } else {
+                        val textField = if (isPassword) javax.swing.JPasswordField() else javax.swing.JTextField()
+                        var displayPrompt = item.promptText ?: ""
+                        if (displayPrompt == "keyEncryptedPrompt") displayPrompt = "Enter passphrase for SSH key"
+                        val result = JOptionPane.showConfirmDialog(null, arrayOf(displayPrompt, textField), "JADX Collaboration", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE)
+                        if (result == JOptionPane.OK_OPTION) {
+                            val textChars = if (textField is javax.swing.JPasswordField) textField.password else textField.text.toCharArray()
+                            item.value = textChars
+                            if (isPassword) {
+                                cachedPassphrase = textChars
+                            }
+                        } else {
+                            ok = false
+                        }
+                    }
+                } else if (item is CredentialItem.StringType) {
+                    val isPassword = item.promptText?.contains("Passphrase", ignoreCase = true) == true || item.promptText?.contains("Password", ignoreCase = true) == true
+                    
+                    if (cachedPassphrase != null && isPassword) {
+                        item.value = String(cachedPassphrase!!)
+                    } else {
+                        val textField = if (isPassword) javax.swing.JPasswordField() else javax.swing.JTextField()
+                        var displayPrompt = item.promptText ?: ""
+                        if (displayPrompt == "keyEncryptedPrompt") displayPrompt = "Enter passphrase for SSH key"
+                        val result = JOptionPane.showConfirmDialog(null, arrayOf(displayPrompt, textField), "JADX Collaboration", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE)
+                        if (result == JOptionPane.OK_OPTION) {
+                            val text = if (textField is javax.swing.JPasswordField) String(textField.password) else textField.text
+                            item.value = text
+                            if (isPassword) {
+                                cachedPassphrase = if (textField is javax.swing.JPasswordField) textField.password else textField.text.toCharArray()
+                            }
+                        } else {
+                            ok = false
+                        }
+                    }
+                } else {
+                    ok = false
+                }
+            }
+            return ok
+        }
+    }
+
     companion object {
         const val ID = "jadx-collaboration"
         val LOG = KotlinLogging.logger(ID)
@@ -93,6 +159,10 @@ class Plugin(
     override fun init(context: JadxPluginContext?) {
         this.context = context
 
+        // Remove security providers added by previous plugin classloaders
+        java.security.Security.removeProvider("EdDSA")
+        java.security.Security.removeProvider("BC")
+
         bypassJGitNLS()
         SshSessionFactory.setInstance(SshdSessionFactory())
 
@@ -132,10 +202,12 @@ class Plugin(
     }
 
     private suspend fun showError(message: String, title: String = "JADX Collaboration") {
+        if (!showDialogs) return
         uiRun { JOptionPane.showMessageDialog(null, message, title, JOptionPane.ERROR_MESSAGE) }
     }
 
     private suspend fun showInfo(message: String, title: String = "JADX Collaboration") {
+        if (!showDialogs) return
         uiRun { JOptionPane.showMessageDialog(null, message, title, JOptionPane.INFORMATION_MESSAGE) }
     }
 
@@ -615,7 +687,9 @@ class Plugin(
         Thread.currentThread().contextClassLoader = Plugin::class.java.classLoader
         try {
             Git.open(gitDir).use { git ->
-                val pullResult = git.pull().call()
+                val pullCommand = git.pull()
+                pullCommand.setCredentialsProvider(JadxCredentialsProvider())
+                val pullResult = pullCommand.call()
                 val mergeResult = pullResult.mergeResult
                 val rebaseResult = pullResult.rebaseResult
                 val hasMergeConflicts = mergeResult?.conflicts?.isNotEmpty() == true
@@ -678,7 +752,9 @@ class Plugin(
 
                 git.commit().setMessage("jadx-collaboration push").call()
 
-                val pushResults = git.push().call()
+                val pushCommand = git.push()
+                pushCommand.setCredentialsProvider(JadxCredentialsProvider())
+                val pushResults = pushCommand.call()
                 for (pushResult in pushResults) {
                     for (refUpdate in pushResult.remoteUpdates) {
                         val refStatus = refUpdate.status
