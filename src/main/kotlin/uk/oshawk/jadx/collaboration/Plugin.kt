@@ -354,8 +354,11 @@ open class Plugin(
     }
 
     private fun projectToLocalRepository(localRepository: LocalRepository) {
-        if (options.username.isNotEmpty()) {
-            localRepository.users[localRepository.uuid] = options.username
+        val username = options.username.trim()
+        if (username.isNotBlank()) {
+            localRepository.users[localRepository.uuid] = username
+        } else {
+            localRepository.users.remove(localRepository.uuid)
         }
 
         val projectRenames = getProjectRenames()
