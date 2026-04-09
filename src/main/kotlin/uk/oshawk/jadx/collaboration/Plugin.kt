@@ -690,6 +690,7 @@ open class Plugin(
 
         LOG.info { "localRepositoryToRemoteRepository: ${remoteRepository.comments.size} new remote repository comments" }
 
+        remoteRepository.users.clear()
         remoteRepository.users.putAll(localRepository.users)
     }
 
