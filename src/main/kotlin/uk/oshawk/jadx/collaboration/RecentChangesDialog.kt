@@ -15,6 +15,7 @@ class RecentChangesDialog(
 ) : JDialog(parent, "Recent Changes", false) {
     init {
         size = Dimension(800, 600)
+        defaultCloseOperation = DISPOSE_ON_CLOSE
         setLocationRelativeTo(parent)
 
         val columns = arrayOf("Time", "User", "Type", "Location", "New Value")
