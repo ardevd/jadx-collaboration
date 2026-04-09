@@ -431,6 +431,10 @@ class PluginTest {
 
 class BackgroundExecutorTest {
 
+    companion object {
+        private const val TEST_TIMEOUT_MS = 5000L
+    }
+
     private fun buildPluginWithBackgroundExecutor(
         mockBackgroundExecutor: BackgroundExecutor
     ): Triple<Plugin, Runnable?, Runnable?> {
@@ -513,7 +517,7 @@ class BackgroundExecutorTest {
         val mockBackgroundExecutor = mock<BackgroundExecutor> {
             on { execute(any<String>(), any<Runnable>()) } doAnswer { inv ->
                 // Execute the runnable on a background thread to simulate real executor behavior
-                Thread { inv.getArgument<Runnable>(1).run() }.also { it.start() }.join(5000)
+                Thread { inv.getArgument<Runnable>(1).run() }.also { it.start() }.join(TEST_TIMEOUT_MS)
             }
         }
 
@@ -553,7 +557,7 @@ class BackgroundExecutorTest {
                 val current = activeCount.incrementAndGet()
                 maxConcurrent.updateAndGet { max -> maxOf(max, current) }
                 firstStarted.countDown()
-                firstMayFinish.await(5, TimeUnit.SECONDS)
+                firstMayFinish.await(TEST_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                 activeCount.decrementAndGet()
             }
 
@@ -569,14 +573,14 @@ class BackgroundExecutorTest {
         val pullThread = Thread { pullAction?.run() }.also { it.start() }
 
         // Wait for pull to start, then trigger push concurrently
-        assertTrue(firstStarted.await(5, TimeUnit.SECONDS), "Pull action did not start in time")
+        assertTrue(firstStarted.await(TEST_TIMEOUT_MS, TimeUnit.MILLISECONDS), "Pull action did not start in time")
         val pushThread = Thread { pushAction?.run() }.also { it.start() }
 
         // Allow the first action to complete, then the second should run
         firstMayFinish.countDown()
 
-        pullThread.join(5000)
-        pushThread.join(5000)
+        pullThread.join(TEST_TIMEOUT_MS)
+        pushThread.join(TEST_TIMEOUT_MS)
 
         assertFalse(pullThread.isAlive, "Pull thread did not complete")
         assertFalse(pushThread.isAlive, "Push thread did not complete")
