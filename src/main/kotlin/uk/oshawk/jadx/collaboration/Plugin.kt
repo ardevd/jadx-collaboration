@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
@@ -168,17 +169,32 @@ class Plugin(
 
         this.context?.registerOptions(options)
 
-        this.context?.guiContext?.addMenuAction("Pull") { pluginScope.launch { this@Plugin.pull() } }
-        this.context?.guiContext?.addMenuAction("Push") { pluginScope.launch { this@Plugin.push() } }
+        this.context?.guiContext?.addMenuAction("Pull") { runInBackground("JADX Collaboration: Pulling...") { this@Plugin.pull() } }
+        this.context?.guiContext?.addMenuAction("Push") { runInBackground("JADX Collaboration: Pushing...") { this@Plugin.push() } }
 
         this.context?.guiContext?.registerGlobalKeyBinding(
             "$ID.pull",
             "ctrl BACK_SLASH"
-        ) { pluginScope.launch { this@Plugin.pull() } }
+        ) { runInBackground("JADX Collaboration: Pulling...") { this@Plugin.pull() } }
         this.context?.guiContext?.registerGlobalKeyBinding(
             "$ID.push",
             "ctrl shift BACK_SLASH"
-        ) { pluginScope.launch { this@Plugin.push() } }
+        ) { runInBackground("JADX Collaboration: Pushing...") { this@Plugin.push() } }
+    }
+
+    private fun runInBackground(title: String, action: suspend () -> Unit) {
+        val guiContext = context?.guiContext
+        val mainWindow = guiContext?.mainFrame as? MainWindow
+        val backgroundExecutor = mainWindow?.backgroundExecutor
+
+        if (backgroundExecutor != null) {
+            backgroundExecutor.execute(title) {
+                val job = pluginScope.launch { action() }
+                runBlocking { job.join() }
+            }
+        } else {
+            pluginScope.launch { action() }
+        }
     }
 
     private suspend fun uiRun(action: () -> Unit) {
@@ -776,7 +792,7 @@ class Plugin(
         return Unit
     }
 
-    internal suspend fun pull() {
+    internal open suspend fun pull() {
         // Update local repository with project changes.
         // Pull remote repository into local repository.
         // Update project from local repository.
@@ -818,7 +834,7 @@ class Plugin(
         showInfo("Pull completed successfully. ($pulledChanges changes pulled)")
     }
 
-    internal suspend fun push() {
+    internal open suspend fun push() {
         // Update local repository with project changes.
         // Pull remote repository into local repository until there is no conflict.
 
