@@ -25,6 +25,8 @@ import kotlin.coroutines.resumeWithException
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
 import org.eclipse.jgit.transport.RemoteRefUpdate
+import org.eclipse.jgit.transport.SshSessionFactory
+import org.eclipse.jgit.transport.sshd.SshdSessionFactory
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.*
@@ -50,6 +52,8 @@ class Plugin(
 
     override fun init(context: JadxPluginContext?) {
         this.context = context
+
+        SshSessionFactory.setInstance(SshdSessionFactory())
 
         this.context?.registerOptions(options)
 

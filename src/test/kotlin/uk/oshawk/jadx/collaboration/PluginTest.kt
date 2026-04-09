@@ -129,7 +129,7 @@ class RepositoryMockery(
         try {
             Git.init().setInitialBranch("main").setDirectory(tempDir).call().use { git ->
                 setGitIdentity(git)
-                git.remoteAdd().setName("origin").setUri(URIish(bareGitDir.toURI())).call()
+                git.remoteAdd().setName("origin").setUri(URIish(bareGitDir.toURI().toURL())).call()
                 git.commit().setMessage("Initial commit").setAllowEmpty(true).call()
                 git.push().setRemote("origin")
                     .setRefSpecs(RefSpec("HEAD:refs/heads/main")).call()
