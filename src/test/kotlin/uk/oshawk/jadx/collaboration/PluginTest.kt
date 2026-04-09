@@ -7,12 +7,16 @@ import jadx.api.data.impl.JadxCodeData
 import jadx.api.plugins.JadxPluginContext
 import jadx.api.plugins.events.IJadxEvents
 import jadx.api.plugins.gui.JadxGuiContext
+import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.transport.RefSpec
+import org.eclipse.jgit.transport.URIish
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.fail
 import org.mockito.kotlin.*
 import kotlinx.coroutines.runBlocking
+import java.io.File
 import java.nio.file.Path
 import kotlin.io.path.*
 
@@ -58,7 +62,7 @@ class PluginMockery(conflictResolver: (context: JadxPluginContext, remote: Repos
         on { registerOptions(any()) } doAnswer { options = it.getArgument<Options>(0) }
     }
 
-    val plugin = Plugin(conflictResolver)
+    val plugin = Plugin(conflictResolver, false)
 
     init {
         plugin.init(jadxPluginContext)
@@ -89,7 +93,7 @@ class RepositoryMockery(
     val rightLocal = Path(rightDirectory.toString(), "repository.local")
 
     val remoteDirectory = createTempDirectory("remote")
-    val remote = Path(remoteDirectory.toString(), "repository")
+    val bareGitDir = File(remoteDirectory.toFile(), "repo.git")
 
     val leftPlugin = PluginMockery(conflictResolver)
     val rightPlugin = PluginMockery(conflictResolver)
@@ -100,51 +104,54 @@ class RepositoryMockery(
         leftLocal.deleteIfExists()
         rightRemote.deleteIfExists()
         rightLocal.deleteIfExists()
-        remote.deleteIfExists()
     }
 
     init {
+        initBareRepo()
+        cloneRepo(leftDirectory.toFile())
+        cloneRepo(rightDirectory.toFile())
+
         leftPlugin.options!!.repository = leftRemote.toString()
         rightPlugin.options!!.repository = rightRemote.toString()
     }
 
-    private fun copy(from: Path, to: Path) {
-        Plugin.LOG.info { "copy: $from to $to" }
-
-        if (from.exists()) {
-            from.copyTo(to, true)
-        } else {
-            to.deleteIfExists()
+    private fun setGitIdentity(git: Git) {
+        git.repository.config.apply {
+            setString("user", null, "name", "Test User")
+            setString("user", null, "email", "test@example.com")
+            save()
         }
     }
 
-    fun leftToRemote() = copy(leftRemote, remote)
-    fun rightToRemote() = copy(rightRemote, remote)
-
-    fun remoteToLeft() = copy(remote, leftRemote)
-    fun remoteToRight() = copy(remote, rightRemote)
-
-    fun leftPull() = runBlocking {
-        remoteToLeft()
-        leftPlugin.plugin.pull()
+    private fun initBareRepo() {
+        Git.init().setBare(true).setInitialBranch("main").setDirectory(bareGitDir).call().close()
+        val tempDir = createTempDirectory("init_tmp").toFile()
+        try {
+            Git.init().setInitialBranch("main").setDirectory(tempDir).call().use { git ->
+                setGitIdentity(git)
+                git.remoteAdd().setName("origin").setUri(URIish(bareGitDir.toURI().toURL())).call()
+                git.commit().setMessage("Initial commit").setAllowEmpty(true).call()
+                git.push().setRemote("origin")
+                    .setRefSpecs(RefSpec("HEAD:refs/heads/main")).call()
+            }
+        } finally {
+            tempDir.deleteRecursively()
+        }
     }
 
-    fun rightPull() = runBlocking {
-        remoteToRight()
-        rightPlugin.plugin.pull()
+    private fun cloneRepo(targetDir: File) {
+        Git.cloneRepository().setURI(bareGitDir.toURI().toString()).setDirectory(targetDir)
+            .setBranch("refs/heads/main")
+            .call().use { git -> setGitIdentity(git) }
     }
 
-    fun leftPush() = runBlocking {
-        remoteToLeft()
-        leftPlugin.plugin.push()
-        leftToRemote()
-    }
+    fun leftPull() = runBlocking { leftPlugin.plugin.pull() }
 
-    fun rightPush() = runBlocking {
-        remoteToRight()
-        rightPlugin.plugin.push()
-        rightToRemote()
-    }
+    fun rightPull() = runBlocking { rightPlugin.plugin.pull() }
+
+    fun leftPush() = runBlocking { leftPlugin.plugin.push() }
+
+    fun rightPush() = runBlocking { rightPlugin.plugin.push() }
 }
 
 class PluginTest {

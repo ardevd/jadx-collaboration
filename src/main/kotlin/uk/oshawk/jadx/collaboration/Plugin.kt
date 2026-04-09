@@ -22,6 +22,14 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.eclipse.jgit.transport.CredentialItem
+import org.eclipse.jgit.transport.CredentialsProvider
+import org.eclipse.jgit.transport.RemoteRefUpdate
+import org.eclipse.jgit.transport.SshSessionFactory
+import org.eclipse.jgit.transport.URIish
+import org.eclipse.jgit.transport.sshd.SshdSessionFactory
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.*
@@ -32,7 +40,70 @@ import kotlin.math.max
 class Plugin(
     // Use remote? Pluggable for testing.
     val conflictResolver: (context: JadxPluginContext, remote: RepositoryItem, local: RepositoryItem) -> Boolean? = ::dialogConflictResolver,
+    val showDialogs: Boolean = true
 ) : JadxPlugin {
+    private var cachedPassphrase: CharArray? = null
+
+    private inner class JadxCredentialsProvider : CredentialsProvider() {
+        override fun isInteractive() = showDialogs
+        override fun supports(vararg items: CredentialItem): Boolean = true
+        override fun get(uri: URIish?, vararg items: CredentialItem): Boolean {
+            if (!showDialogs) return true
+            var ok = true
+            for (item in items) {
+                if (item is CredentialItem.InformationalMessage) {
+                    LOG.info { "SSH Info: ${item.promptText}" }
+                } else if (item is CredentialItem.YesNoType) {
+                    val result = JOptionPane.showConfirmDialog(null, item.promptText, "JADX Collaboration", JOptionPane.YES_NO_OPTION)
+                    item.value = result == JOptionPane.YES_OPTION
+                } else if (item is CredentialItem.CharArrayType) {
+                    val isPassword = item is CredentialItem.Password || item.promptText?.contains("Passphrase", ignoreCase = true) == true || item.promptText?.contains("Password", ignoreCase = true) == true
+                    
+                    if (cachedPassphrase != null && isPassword) {
+                        item.value = cachedPassphrase
+                    } else {
+                        val textField = if (isPassword) javax.swing.JPasswordField() else javax.swing.JTextField()
+                        var displayPrompt = item.promptText ?: ""
+                        if (displayPrompt == "keyEncryptedPrompt") displayPrompt = "Enter passphrase for SSH key"
+                        val result = JOptionPane.showConfirmDialog(null, arrayOf(displayPrompt, textField), "JADX Collaboration", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE)
+                        if (result == JOptionPane.OK_OPTION) {
+                            val textChars = if (textField is javax.swing.JPasswordField) textField.password else textField.text.toCharArray()
+                            item.value = textChars
+                            if (isPassword) {
+                                cachedPassphrase = textChars
+                            }
+                        } else {
+                            ok = false
+                        }
+                    }
+                } else if (item is CredentialItem.StringType) {
+                    val isPassword = item.promptText?.contains("Passphrase", ignoreCase = true) == true || item.promptText?.contains("Password", ignoreCase = true) == true
+                    
+                    if (cachedPassphrase != null && isPassword) {
+                        item.value = String(cachedPassphrase!!)
+                    } else {
+                        val textField = if (isPassword) javax.swing.JPasswordField() else javax.swing.JTextField()
+                        var displayPrompt = item.promptText ?: ""
+                        if (displayPrompt == "keyEncryptedPrompt") displayPrompt = "Enter passphrase for SSH key"
+                        val result = JOptionPane.showConfirmDialog(null, arrayOf(displayPrompt, textField), "JADX Collaboration", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE)
+                        if (result == JOptionPane.OK_OPTION) {
+                            val text = if (textField is javax.swing.JPasswordField) String(textField.password) else textField.text
+                            item.value = text
+                            if (isPassword) {
+                                cachedPassphrase = if (textField is javax.swing.JPasswordField) textField.password else textField.text.toCharArray()
+                            }
+                        } else {
+                            ok = false
+                        }
+                    }
+                } else {
+                    ok = false
+                }
+            }
+            return ok
+        }
+    }
+
     companion object {
         const val ID = "jadx-collaboration"
         val LOG = KotlinLogging.logger(ID)
@@ -45,8 +116,55 @@ class Plugin(
 
     override fun getPluginInfo() = JadxPluginInfo(ID, "JADX Collaboration", "Collaboration support for JADX")
 
+    private fun bypassJGitNLS() {
+        try {
+            val cacheField = Class.forName("org.eclipse.jgit.nls.GlobalBundleCache").getDeclaredField("cachedBundles")
+            cacheField.isAccessible = true
+            @Suppress("UNCHECKED_CAST")
+            val cachedBundles = cacheField.get(null) as MutableMap<java.util.Locale, MutableMap<Class<*>, org.eclipse.jgit.nls.TranslationBundle>>
+            
+            // JGit uses NLS.ROOT_LOCALE as well as the default locale
+            val localesToStub = listOf(java.util.Locale.getDefault(), java.util.Locale("", "", ""))
+            
+            val classesToStub = listOf(
+                "org.eclipse.jgit.internal.JGitText",
+                "org.eclipse.jgit.internal.transport.sshd.SshdText",
+                "org.eclipse.jgit.transport.ssh.apache.internal.SshdText"
+            )
+            
+            for (locale in localesToStub) {
+                val localeBundles = cachedBundles.getOrPut(locale) { mutableMapOf() }
+                for (className in classesToStub) {
+                    try {
+                        val clazz = Class.forName(className)
+                        if (!localeBundles.containsKey(clazz)) {
+                            val dummyBundle = clazz.getDeclaredConstructor().apply { isAccessible = true }.newInstance() as org.eclipse.jgit.nls.TranslationBundle
+                            for (field in clazz.fields) {
+                                if (field.type == String::class.java) {
+                                    field.set(dummyBundle, field.name)
+                                }
+                            }
+                            localeBundles[clazz] = dummyBundle
+                        }
+                    } catch (e: Exception) {
+                        // Ignore missing classes
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            LOG.warn(e) { "Could not bypass JGit NLS" }
+        }
+    }
+
     override fun init(context: JadxPluginContext?) {
         this.context = context
+
+        // Remove security providers added by previous plugin classloaders
+        java.security.Security.removeProvider("EdDSA")
+        java.security.Security.removeProvider("BC")
+
+        bypassJGitNLS()
+        SshSessionFactory.setInstance(SshdSessionFactory())
 
         this.context?.registerOptions(options)
 
@@ -84,10 +202,12 @@ class Plugin(
     }
 
     private suspend fun showError(message: String, title: String = "JADX Collaboration") {
+        if (!showDialogs) return
         uiRun { JOptionPane.showMessageDialog(null, message, title, JOptionPane.ERROR_MESSAGE) }
     }
 
     private suspend fun showInfo(message: String, title: String = "JADX Collaboration") {
+        if (!showDialogs) return
         uiRun { JOptionPane.showMessageDialog(null, message, title, JOptionPane.INFORMATION_MESSAGE) }
     }
 
@@ -544,47 +664,115 @@ class Plugin(
         LOG.info { "localRepositoryToRemoteRepository: ${remoteRepository.comments.size} new remote repository comments" }
     }
 
-    private fun runScript(script: String): Int {
-        if (script.isEmpty()) return 0
-
-        val command = mutableListOf<String>()
-
-        if (System.getProperty("os.name").lowercase(Locale.getDefault()).contains("win")) {
-            command.add(0, "powershell.exe")
-            command.add(1, "-File")
+    private fun jgitPull(): Unit? {
+        if (options.repository.isEmpty()) {
+            LOG.error { "JGit pull failed: repository path is empty" }
+            return null
         }
+        val repoFile = File(options.repository).absoluteFile
+        val repoParent = repoFile.parentFile ?: run {
+            LOG.error { "JGit pull failed: could not determine parent directory" }
+            return null
+        }
+        val repositoryBuilder = FileRepositoryBuilder().findGitDir(repoParent)
+        val gitMetadataDir = repositoryBuilder.gitDir ?: run {
+            LOG.error { "JGit pull failed: no Git repository found in or above ${repoParent.absolutePath}" }
+            return null
+        }
+        val gitDir = gitMetadataDir.parentFile ?: run {
+            LOG.error { "JGit pull failed: could not determine Git worktree from ${gitMetadataDir.absolutePath}" }
+            return null
+        }
+        val previousClassLoader = Thread.currentThread().contextClassLoader
+        Thread.currentThread().contextClassLoader = Plugin::class.java.classLoader
+        try {
+            Git.open(gitDir).use { git ->
+                val pullCommand = git.pull()
+                pullCommand.setCredentialsProvider(JadxCredentialsProvider())
+                val pullResult = pullCommand.call()
+                val mergeResult = pullResult.mergeResult
+                val rebaseResult = pullResult.rebaseResult
+                val hasMergeConflicts = mergeResult?.conflicts?.isNotEmpty() == true
+                val mergeFailed = mergeResult != null && (!mergeResult.mergeStatus.isSuccessful || hasMergeConflicts)
+                val rebaseFailed = rebaseResult != null && !rebaseResult.status.isSuccessful
 
-        command.add(script)
-        command.add(options.repository)
-
-        val process = ProcessBuilder(command).start()
-        process.waitFor()
-        return process.exitValue()
-    }
-
-    private fun runPrePullScript() = runScript(this.options.prePull)
-    private fun runPostPushScript() = runScript(this.options.postPush)
-
-    private fun runPrePullScriptRepeat(): Unit? {
-        for (i in 1..5) {
-            when (val exitCode = runPrePullScript()) {
-                0 -> break
-                1 -> {
-                    if (i == 5) {
-                        LOG.error { "Pre-pull script failed temporarily on try $i. Aborting." }
-                        return null
-                    } else {
-                        LOG.warn { "Pre-pull script failed temporarily on try $i. Retrying." }
+                if (!pullResult.isSuccessful || mergeFailed || rebaseFailed) {
+                    val mergeStatus = mergeResult?.mergeStatus?.toString() ?: "N/A"
+                    val rebaseStatus = rebaseResult?.status?.toString() ?: "N/A"
+                    val conflictFiles = mergeResult?.conflicts?.keys?.sorted()?.joinToString(", ")
+                    LOG.error {
+                        "JGit pull failed: isSuccessful=${pullResult.isSuccessful}, " +
+                            "mergeStatus=$mergeStatus, rebaseStatus=$rebaseStatus" +
+                            if (hasMergeConflicts) ", conflictFiles=$conflictFiles" else ""
                     }
-                }
-
-                else -> {
-                    LOG.error { "Pre-pull script failed permanently with exit code $exitCode on try number $i. Aborting," }
                     return null
                 }
+                LOG.info { "JGit pull successful" }
             }
+        } catch (e: Exception) {
+            LOG.error(e) { "JGit pull exception" }
+            return null
+        } finally {
+            Thread.currentThread().contextClassLoader = previousClassLoader
         }
+        return Unit
+    }
 
+    private fun jgitPush(): Unit? {
+        if (options.repository.isEmpty()) {
+            LOG.error { "JGit push failed: repository path is empty" }
+            return null
+        }
+        val repoFile = File(options.repository).absoluteFile
+        val repoParent = repoFile.parentFile ?: run {
+            LOG.error { "JGit push failed: could not determine parent directory" }
+            return null
+        }
+        val repositoryBuilder = FileRepositoryBuilder().findGitDir(repoParent)
+        val gitMetadataDir = repositoryBuilder.gitDir ?: run {
+            LOG.error { "JGit push failed: no Git repository found in or above ${repoParent.absolutePath}" }
+            return null
+        }
+        val gitDir = gitMetadataDir.parentFile ?: run {
+            LOG.error { "JGit push failed: could not determine Git worktree from ${gitMetadataDir.absolutePath}" }
+            return null
+        }
+        val previousClassLoader = Thread.currentThread().contextClassLoader
+        Thread.currentThread().contextClassLoader = Plugin::class.java.classLoader
+        try {
+            Git.open(gitDir).use { git ->
+                val repoPath = repoFile.relativeTo(gitDir).path.replace(File.separatorChar, '/')
+                git.add().addFilepattern(repoPath).call()
+
+                val stagingStatus = git.status().call()
+                if (stagingStatus.added.isEmpty() && stagingStatus.changed.isEmpty()) {
+                    LOG.info { "JGit push skipped: no content changes to commit" }
+                    return Unit
+                }
+
+                git.commit().setMessage("jadx-collaboration push").call()
+
+                val pushCommand = git.push()
+                pushCommand.setCredentialsProvider(JadxCredentialsProvider())
+                val pushResults = pushCommand.call()
+                for (pushResult in pushResults) {
+                    for (refUpdate in pushResult.remoteUpdates) {
+                        val refStatus = refUpdate.status
+                        if (refStatus != RemoteRefUpdate.Status.OK &&
+                            refStatus != RemoteRefUpdate.Status.UP_TO_DATE) {
+                            LOG.error { "JGit push failed: ref ${refUpdate.remoteName} status=$refStatus message=${refUpdate.message}" }
+                            return null
+                        }
+                    }
+                }
+                LOG.info { "JGit push successful" }
+            }
+        } catch (e: Exception) {
+            LOG.error(e) { "JGit push exception" }
+            return null
+        } finally {
+            Thread.currentThread().contextClassLoader = previousClassLoader
+        }
         return Unit
     }
 
@@ -600,8 +788,8 @@ class Plugin(
 
         projectToLocalRepository(localRepository)
 
-        runPrePullScriptRepeat() ?: run {
-            showError("Pull failed: Pre-pull script failed.")
+        jgitPull() ?: run {
+            showError("Pull failed: JGit pull failed.")
             return
         }
 
@@ -649,8 +837,8 @@ class Plugin(
             // Repeat if there is a conflict. Should limit the chance of race conditions, since the user may take time to resolve conflicts.
             var remoteRepository: RemoteRepository
             do {
-                runPrePullScriptRepeat() ?: run {
-                    showError("Push failed: Pre-pull script failed.")
+                jgitPull() ?: run {
+                    showError("Push failed: JGit pull failed.")
                     return
                 }
 
@@ -686,24 +874,11 @@ class Plugin(
                 return
             }
 
-            when (val exitCode = runPostPushScript()) {
-                0 -> break
-                1 -> {
-                    if (i == 5) {
-                        LOG.error { "Post-push script failed temporarily on try $i. Aborting." }
-                        showError("Push failed: Post-push script failed temporarily.")
-                        return
-                    } else {
-                        LOG.warn { "Post-push script failed temporarily on try $i. Retrying." }
-                    }
-                }
-
-                else -> {
-                    LOG.error { "Post-push script failed permanently with exit code $exitCode on try number $i. Aborting," }
-                    showError("Push failed: Post-push script failed permanently.")
-                    return
-                }
+            jgitPush() ?: run {
+                showError("Push failed: JGit push failed.")
+                return
             }
+            break
         }
 
         // Think it is a good idea to do this after the script. If something goes wrong, the on-disk local repository should allow us to recover.
