@@ -38,7 +38,7 @@ import javax.swing.Icon
 import javax.swing.JOptionPane
 import kotlin.math.max
 
-class Plugin(
+open class Plugin(
     // Use remote? Pluggable for testing.
     val conflictResolver: (context: JadxPluginContext, remote: RepositoryItem, local: RepositoryItem) -> Boolean? = ::dialogConflictResolver,
     val showDialogs: Boolean = true
@@ -354,6 +354,10 @@ class Plugin(
     }
 
     private fun projectToLocalRepository(localRepository: LocalRepository) {
+        if (options.username.isNotEmpty()) {
+            localRepository.users[localRepository.uuid] = options.username
+        }
+
         val projectRenames = getProjectRenames()
         LOG.info { "projectToLocalRepository: ${projectRenames.size} project renames" }
         LOG.info { "projectToLocalRepository: ${localRepository.renames.size} old local repository renames" }
@@ -504,6 +508,8 @@ class Plugin(
         }
 
         LOG.info { "remoteRepositoryToLocalRepository: ${localRepository.comments.size} new local repository comments" }
+
+        localRepository.users.putAll(remoteRepository.users)
 
         return conflict
     }
@@ -678,6 +684,8 @@ class Plugin(
         remoteRepository.comments = localRepository.comments
 
         LOG.info { "localRepositoryToRemoteRepository: ${remoteRepository.comments.size} new remote repository comments" }
+
+        remoteRepository.users.putAll(localRepository.users)
     }
 
     private fun jgitPull(): Unit? {

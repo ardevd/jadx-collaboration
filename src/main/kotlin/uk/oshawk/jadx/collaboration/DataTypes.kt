@@ -209,10 +209,12 @@ class LocalRepository {
     var renames = mutableListOf<RepositoryRename>()
     var comments = mutableListOf<RepositoryComment>()
     val uuid = UUID.randomUUID()
+    var users = mutableMapOf<UUID, String>()
 }
 
 @NoArgs
 class RemoteRepository {
     var renames = mutableListOf<RepositoryRename>()
     var comments = mutableListOf<RepositoryComment>()
+    var users = mutableMapOf<UUID, String>()
 }
