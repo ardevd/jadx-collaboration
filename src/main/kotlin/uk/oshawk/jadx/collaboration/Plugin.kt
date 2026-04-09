@@ -355,7 +355,16 @@ open class Plugin(
 
     private fun projectToLocalRepository(localRepository: LocalRepository) {
         val username = options.username.trim()
+        val oldUsername = localRepository.users[localRepository.uuid]
+
         if (username.isNotBlank()) {
+            if (oldUsername != null && oldUsername != username) {
+                for ((uuid, user) in localRepository.users.toMap()) {
+                    if (user == oldUsername) {
+                        localRepository.users[uuid] = username
+                    }
+                }
+            }
             localRepository.users[localRepository.uuid] = username
         } else {
             localRepository.users.remove(localRepository.uuid)
@@ -513,7 +522,9 @@ open class Plugin(
         LOG.info { "remoteRepositoryToLocalRepository: ${localRepository.comments.size} new local repository comments" }
 
         remoteRepository.users.forEach { (uuid, user) ->
-            localRepository.users.putIfAbsent(uuid, user)
+            if (uuid != localRepository.uuid || options.username.trim().isNotBlank()) {
+                localRepository.users.putIfAbsent(uuid, user)
+            }
         }
 
         return conflict
