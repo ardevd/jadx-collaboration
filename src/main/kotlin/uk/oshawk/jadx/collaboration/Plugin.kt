@@ -50,9 +50,50 @@ class Plugin(
 
     override fun getPluginInfo() = JadxPluginInfo(ID, "JADX Collaboration", "Collaboration support for JADX")
 
+    private fun bypassJGitNLS() {
+        try {
+            val cacheField = Class.forName("org.eclipse.jgit.nls.GlobalBundleCache").getDeclaredField("cachedBundles")
+            cacheField.isAccessible = true
+            @Suppress("UNCHECKED_CAST")
+            val cachedBundles = cacheField.get(null) as MutableMap<java.util.Locale, MutableMap<Class<*>, org.eclipse.jgit.nls.TranslationBundle>>
+            
+            // JGit uses NLS.ROOT_LOCALE as well as the default locale
+            val localesToStub = listOf(java.util.Locale.getDefault(), java.util.Locale("", "", ""))
+            
+            val classesToStub = listOf(
+                "org.eclipse.jgit.internal.JGitText",
+                "org.eclipse.jgit.internal.transport.sshd.SshdText",
+                "org.eclipse.jgit.transport.ssh.apache.internal.SshdText"
+            )
+            
+            for (locale in localesToStub) {
+                val localeBundles = cachedBundles.getOrPut(locale) { mutableMapOf() }
+                for (className in classesToStub) {
+                    try {
+                        val clazz = Class.forName(className)
+                        if (!localeBundles.containsKey(clazz)) {
+                            val dummyBundle = clazz.getDeclaredConstructor().apply { isAccessible = true }.newInstance() as org.eclipse.jgit.nls.TranslationBundle
+                            for (field in clazz.fields) {
+                                if (field.type == String::class.java) {
+                                    field.set(dummyBundle, field.name)
+                                }
+                            }
+                            localeBundles[clazz] = dummyBundle
+                        }
+                    } catch (e: Exception) {
+                        // Ignore missing classes
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            LOG.warn(e) { "Could not bypass JGit NLS" }
+        }
+    }
+
     override fun init(context: JadxPluginContext?) {
         this.context = context
 
+        bypassJGitNLS()
         SshSessionFactory.setInstance(SshdSessionFactory())
 
         this.context?.registerOptions(options)
